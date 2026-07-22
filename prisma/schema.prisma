@@ -68,11 +68,12 @@ model User {
   organizationMemberships OrganizationMember[]
   ownedProjects        Project[]            @relation("ProjectOwner")
   createdCards         Card[]               @relation("CardCreator")
-  assignedCards        Card[]               @relation("CardAssignee")
+  assignedCards        CardAssignee[]
   comments             Comment[]
   activities           Activity[]
   notifications        Notification[]
-  sentInvitations Invitation[] @relation("Inviter")
+  sentInvitations      OrganizationInvitation[] @relation("InvitationSender")
+  receivedInvitations  OrganizationInvitation[] @relation("InvitationReceiver")
 }
 
 // ---------- ORGANIZATION ----------
@@ -84,10 +85,31 @@ model Organization {
   ownerId     String
   createdAt   DateTime @default(now())
 
-  owner    User                @relation("OrganizationOwner", fields: [ownerId], references: [id])
-  members  OrganizationMember[]
-  projects Project[]
-  invitations Invitation[]
+  owner       User                @relation("OrganizationOwner", fields: [ownerId], references: [id])
+  members     OrganizationMember[]
+  projects    Project[]
+  invitations OrganizationInvitation[]
+}
+
+// Davet edilen kullanici PENDING durumunda bekler, kabul edince
+// OrganizationMember satiri olusturulur - "davet et = aninda uye yap"
+// davranisi yerine onay adimi ekliyor.
+model OrganizationInvitation {
+  id             String           @id @default(cuid())
+  organizationId String
+  invitedUserId  String
+  invitedById    String
+  role           Role             @default(MEMBER)
+  status         InvitationStatus @default(PENDING)
+  createdAt      DateTime         @default(now())
+  respondedAt    DateTime?
+
+  organization  Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invitedUser   User           @relation("InvitationReceiver", fields: [invitedUserId], references: [id], onDelete: Cascade)
+  invitedBy     User           @relation("InvitationSender", fields: [invitedById], references: [id])
+  notifications Notification[]
+
+  @@index([invitedUserId, status])
 }
 
 model OrganizationMember {
@@ -137,7 +159,6 @@ model Card {
   title          String
   description    String?
   creatorId      String
-  assigneeId     String?
   priority       Priority  @default(MEDIUM)
   dueDate        DateTime?
   position       Float
@@ -149,18 +170,28 @@ model Card {
 
   column   Column @relation(fields: [columnId], references: [id], onDelete: Cascade)
   creator  User   @relation("CardCreator", fields: [creatorId], references: [id])
-  assignee User?  @relation("CardAssignee", fields: [assigneeId], references: [id])
 
   comments      Comment[]
   labels        CardLabel[]
+  assignees     CardAssignee[]
   blocking      CardDependency[] @relation("Blocker") // bu kartın blokladıkları
   blockedBy     CardDependency[] @relation("Blocked") // bu kartı bloklayanlar
   activities    Activity[]
   notifications Notification[]
 
   @@index([columnId])
-  @@index([assigneeId])
   @@index([lastActivityAt]) // cron taraması hızlı olsun
+}
+
+// Coklu atama: bir kart birden fazla kisiye atanabilir (CardLabel ile ayni desen)
+model CardAssignee {
+  cardId String
+  userId String
+
+  card Card @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([cardId, userId])
 }
 
 model Comment {
@@ -225,34 +256,18 @@ model Activity {
 }
 
 model Notification {
-  id        String           @id @default(cuid())
-  userId    String
-  cardId    String?
+  id           String           @id @default(cuid())
+  userId       String
+  cardId       String?
   invitationId String?
-  type      NotificationType
-  message   String
-  read      Boolean          @default(false)
-  createdAt DateTime         @default(now())
+  type         NotificationType
+  message      String
+  read         Boolean          @default(false)
+  createdAt    DateTime         @default(now())
 
-  user User  @relation(fields: [userId], references: [id], onDelete: Cascade)
-  card Card? @relation(fields: [cardId], references: [id], onDelete: Cascade)
-  invitation Invitation? @relation(fields: [invitationId], references: [id], onDelete: Cascade)
+  user       User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  card       Card?                   @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  invitation OrganizationInvitation? @relation(fields: [invitationId], references: [id], onDelete: Cascade)
 
   @@index([userId, read])
-}
-
-model Invitation {
-  id             String           @id @default(cuid())
-  organizationId String
-  inviterId      String
-  inviteeEmail   String
-  status         InvitationStatus @default(PENDING)
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
-
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  inviter      User         @relation("Inviter", fields: [inviterId], references: [id])
-  notifications Notification[]
-
-  @@index([inviteeEmail, status])
 }

@@ -1,7 +1,6 @@
 // Socket.io server setup for real-time notifications
 import { Server as HttpServer } from "http";
 import { Server as SocketIOServer, Socket } from "socket.io";
-import { createServer } from "http";
 import { verifyToken } from "@/utils/jwt";
 import { prisma } from "@/lib/prisma";
 
@@ -124,6 +123,8 @@ export interface NotificationPayload {
   message: string;
   cardId?: string;
   card?: { id: string; title: string };
+  invitationId?: string;
+  invitation?: { id: string; status: string };
   read: boolean;
   createdAt: string;
 }
@@ -152,8 +153,7 @@ export interface CardPayload {
   description?: string;
   columnId: string;
   projectId: string;
-  assigneeId?: string;
-  assignee?: { id: string; name: string };
+  assignees?: { id: string; name: string }[];
   priority: string;
   dueDate?: string;
   position: number;
@@ -250,22 +250,19 @@ export interface AuthenticatedSocket extends Socket {
   projects?: string[];
 }
 
-declare global {
-  var __io: SocketIOServer<ServerSocketEvents> | undefined;
-}
-
-let io: SocketIOServer<ServerSocketEvents> | null = null;
+// server.ts (require ile) ve Next'in API route'lari (Next'in kendi bundler'i
+// uzerinden import ile) bu dosyayi IKI AYRI modul kopyasi olarak yukluyor.
+// globalThis ile tum surec icinde TEK bir io referansi garantileniyor.
+const globalForSocket = globalThis as unknown as { __io?: SocketIOServer<ServerSocketEvents> };
 
 export function getIO(): SocketIOServer<ServerSocketEvents> | null {
-  return globalThis.__io || io || null;
+  return globalForSocket.__io ?? null;
 }
 
 export function initializeSocket(httpServer: HttpServer): SocketIOServer<ServerSocketEvents> {
-  if (globalThis.__io) {
-    return globalThis.__io;
-  }
+  if (globalForSocket.__io) return globalForSocket.__io;
 
-  io = new SocketIOServer<ServerSocketEvents>(httpServer, {
+  const io = new SocketIOServer<ServerSocketEvents>(httpServer, {
     cors: {
       origin: process.env.FRONTEND_URL || "http://localhost:3000",
       methods: ["GET", "POST"],
@@ -276,21 +273,17 @@ export function initializeSocket(httpServer: HttpServer): SocketIOServer<ServerS
     pingInterval: 25000,
   });
 
-  globalThis.__io = io;
+  globalForSocket.__io = io;
 
   // Authentication middleware
   io.use(async (socket: AuthenticatedSocket, next) => {
     try {
       const token = socket.handshake.auth.token || socket.handshake.query.token;
 
-      if (!token) {
-        return next(new Error("Authentication required"));
-      }
+      if (!token) return next(new Error("Authentication required"));
 
       const payload = verifyToken(token as string);
-      if (!payload) {
-        return next(new Error("Invalid token"));
-      }
+      if (!payload) return next(new Error("Invalid token"));
 
       // Fetch user from DB to ensure they still exist
       const user = await prisma.user.findUnique({
@@ -298,9 +291,7 @@ export function initializeSocket(httpServer: HttpServer): SocketIOServer<ServerS
         select: { id: true, name: true, email: true },
       });
 
-      if (!user) {
-        return next(new Error("User not found"));
-      }
+      if (!user) return next(new Error("User not found"));
 
       socket.userId = user.id;
       socket.userName = user.name;
@@ -329,6 +320,7 @@ export function initializeSocket(httpServer: HttpServer): SocketIOServer<ServerS
 
       next();
     } catch (error) {
+      console.error("[SOCKET] Auth error:", error);
       next(new Error("Authentication failed"));
     }
   });
@@ -370,9 +362,8 @@ export function initializeSocket(httpServer: HttpServer): SocketIOServer<ServerS
     });
 
     // Handle typing indicator
-    socket.on(SocketEvents.USER_TYPING, (data) => {
-      // Broadcast typing to relevant room
-      if (data.cardId) {
+    socket.on(SocketEvents.USER_TYPING, (data: TypingPayload) => {
+      if (data.projectId) {
         socket.to(`project:${data.projectId}`).emit(SocketEvents.USER_TYPING, {
           userId: socket.userId,
           userName: socket.userName,
@@ -391,6 +382,11 @@ export function initializeSocket(httpServer: HttpServer): SocketIOServer<ServerS
       socket.leave(`project:${projectId}`);
     });
 
+    // Handle joining org room (for invitation acceptance)
+    socket.on("join:org", (organizationId: string) => {
+      socket.join(`org:${organizationId}`);
+    });
+
     // Handle joining card room (for comments, activity)
     socket.on("join:card", (cardId: string) => {
       socket.join(`card:${cardId}`);
@@ -401,7 +397,7 @@ export function initializeSocket(httpServer: HttpServer): SocketIOServer<ServerS
     });
   });
 
-  console.log("Socket.io server initialized");
+  console.log("[SOCKET] Socket.io sunucusu baslatildi");
   return io;
 }
 
@@ -413,7 +409,6 @@ export function broadcastToUser(userId: string, event: SocketEventName, data: un
     console.log(`[SOCKET] broadcastToUser: io is null, cannot emit ${event} to user:${userId}`);
     return;
   }
-  console.log(`[SOCKET] Emitting ${event} to user:${userId}, data:`, JSON.stringify(data).slice(0, 200));
   (ioServer.to(`user:${userId}`).emit as (event: string, data: unknown) => void)(event, data);
 }
 

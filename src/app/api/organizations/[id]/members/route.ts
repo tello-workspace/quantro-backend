@@ -16,13 +16,13 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const body = await validateBody(request, addMemberSchema);
     if (body instanceof Response) return body;
 
-    const member = await organizationService.addMember(id, body, user.id);
-    return successResponse(member, 201);
+    const invitation = await organizationService.inviteMember(id, body, user.id);
+    return successResponse(invitation, 201);
   } catch (error) {
     if (error instanceof AppError) {
       return errorResponse(error.message, error.statusCode, error.code);
     }
-    return errorResponse("Üye eklenemedi", 500, "INTERNAL_ERROR");
+    return errorResponse("Davet gönderilemedi", 500, "INTERNAL_ERROR");
   }
 }
 

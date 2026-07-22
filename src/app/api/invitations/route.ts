@@ -4,19 +4,19 @@ import { successResponse, errorResponse } from "@/utils/api-response";
 import { authenticate, AuthenticatedRequest } from "@/middleware/auth";
 import { AppError } from "@/utils/errors";
 
-export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+// Bekleyen davetlerim
+export async function GET(request: NextRequest) {
   const authError = await authenticate(request);
   if (authError) return authError;
 
   try {
     const user = (request as AuthenticatedRequest).user;
-    const { id } = await params;
-    const member = await organizationService.acceptInvitation(id, user.id);
-    return successResponse(member);
+    const invitations = await organizationService.getMyInvitations(user.id);
+    return successResponse(invitations);
   } catch (error) {
     if (error instanceof AppError) {
       return errorResponse(error.message, error.statusCode, error.code);
     }
-    return errorResponse("Davet kabul edilemedi", 500, "INTERNAL_ERROR");
+    return errorResponse("Davetler alınamadı", 500, "INTERNAL_ERROR");
   }
 }

@@ -1,8 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { NotFoundError, ConflictError, ForbiddenError } from "@/utils/errors";
 import * as notificationService from "@/services/notification.service";
-import * as invitationService from "@/services/invitation.service";
-import { getIO, broadcastToOrganization, SocketEvents } from "@/server/socket";
+import { broadcastToOrganization, SocketEvents } from "@/server/socket";
 import type { CreateOrganizationInput, UpdateOrganizationInput, AddMemberInput, UpdateMemberRoleInput } from "@/schemas/organization.schema";
 import type { Role } from "@prisma/client";
 
@@ -10,9 +9,7 @@ import type { Role } from "@prisma/client";
 async function checkMembership(organizationId: string, userId: string) {
   const member = await prisma.organizationMember.findUnique({
     where: { organizationId_userId: { organizationId, userId } },
-    include: {
-      user: { select: { id: true, name: true, email: true } },
-    },
+    include: { user: { select: { id: true, name: true, email: true } } },
   });
   return member;
 }
@@ -108,13 +105,150 @@ export async function deleteOrganization(organizationId: string, userId: string)
   await prisma.organization.delete({ where: { id: organizationId } });
 }
 
-// --- ÜYE YÖNETİMİ ---
+// --- DAVET SISTEMI ---
+// "Davet et" artik aninda uye yapmiyor: PENDING bir davet olusturuyor,
+// karsi taraf bildirimden kabul/reddet secene kadar uye olmuyor.
 
-export async function addMember(organizationId: string, input: AddMemberInput, userId: string) {
-  // Davet oluştur (invitationService email ile davet oluşturup bildirim gönderir)
-  const invitation = await invitationService.createInvitation(organizationId, input.email, userId);
+export async function inviteMember(organizationId: string, input: AddMemberInput, userId: string) {
+  const isAdmin = await checkAdmin(organizationId, userId);
+  if (!isAdmin) throw new ForbiddenError("Sadece adminler davet gönderebilir");
+
+  const invitedUser = await prisma.user.findUnique({ where: { email: input.email } });
+  if (!invitedUser) throw new NotFoundError("Bu email ile kayıtlı kullanıcı bulunamadı");
+
+  const existingMembership = await checkMembership(organizationId, invitedUser.id);
+  if (existingMembership) throw new ConflictError("Bu kullanıcı zaten organizasyon üyesi");
+
+  const existingInvite = await prisma.organizationInvitation.findFirst({
+    where: { organizationId, invitedUserId: invitedUser.id, status: "PENDING" },
+  });
+  if (existingInvite) throw new ConflictError("Bu kullanıcıya zaten bekleyen bir davet var");
+
+  const org = await prisma.organization.findUnique({ where: { id: organizationId } });
+  if (!org) throw new NotFoundError("Organizasyon");
+
+  const invitation = await prisma.organizationInvitation.create({
+    data: {
+      organizationId,
+      invitedUserId: invitedUser.id,
+      invitedById: userId,
+      role: (input.role ?? "MEMBER") as Role,
+    },
+  });
+
+  const inviter = await prisma.user.findUnique({ where: { id: userId } });
+
+  await notificationService.createNotification({
+    userId: invitedUser.id,
+    type: "ORG_INVITE",
+    message: `${inviter?.name ?? "Bir kullanıcı"} sizi "${org.name}" organizasyonuna davet etti`,
+    invitationId: invitation.id,
+  });
+
   return invitation;
 }
+
+export async function getMyInvitations(userId: string) {
+  const invitations = await prisma.organizationInvitation.findMany({
+    where: { invitedUserId: userId, status: "PENDING" },
+    include: {
+      organization: { select: { id: true, name: true } },
+      invitedBy: { select: { id: true, name: true } },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  return invitations;
+}
+
+export async function acceptInvitation(invitationId: string, userId: string) {
+  const invitation = await prisma.organizationInvitation.findUnique({
+    where: { id: invitationId },
+    include: { organization: true },
+  });
+  if (!invitation) throw new NotFoundError("Davet");
+  if (invitation.invitedUserId !== userId) throw new ForbiddenError("Bu davet size ait değil");
+  if (invitation.status !== "PENDING") throw new ConflictError("Bu davet zaten yanıtlanmış");
+
+  const member = await prisma.$transaction(async (tx) => {
+    const created = await tx.organizationMember.create({
+      data: {
+        organizationId: invitation.organizationId,
+        userId,
+        role: invitation.role,
+      },
+      include: { user: { select: { id: true, name: true, email: true } } },
+    });
+
+    await tx.organizationInvitation.update({
+      where: { id: invitationId },
+      data: { status: "ACCEPTED", respondedAt: new Date() },
+    });
+
+    return created;
+  });
+
+  await notificationService.createNotification({
+    userId: invitation.invitedById,
+    type: "ORG_JOINED",
+    message: `${member.user.name}, "${invitation.organization.name}" davetini kabul etti`,
+  });
+
+  broadcastToOrganization(invitation.organizationId, SocketEvents.ORG_MEMBER_ADDED, {
+    organizationId: invitation.organizationId,
+    userId: member.userId,
+    userName: member.user.name,
+    role: member.role,
+  });
+
+  return member;
+}
+
+// Organizasyonun henuz yanitlanmamis davetlerini goster - admin kime davet
+// gonderdigini ve hala bekledigini takip edebilsin
+export async function getPendingInvitations(organizationId: string, userId: string) {
+  const isAdmin = await checkAdmin(organizationId, userId);
+  if (!isAdmin) throw new ForbiddenError("Sadece adminler bekleyen davetleri görebilir");
+
+  return prisma.organizationInvitation.findMany({
+    where: { organizationId, status: "PENDING" },
+    include: {
+      invitedUser: { select: { id: true, name: true, email: true } },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+}
+
+// Yanlislikla ya da yanlis email'e gonderilen bekleyen daveti geri al -
+// silinince iliskili ORG_INVITE bildirimi de cascade ile kalkar
+export async function cancelInvitation(organizationId: string, invitationId: string, userId: string) {
+  const isAdmin = await checkAdmin(organizationId, userId);
+  if (!isAdmin) throw new ForbiddenError("Sadece adminler daveti geri alabilir");
+
+  const invitation = await prisma.organizationInvitation.findUnique({ where: { id: invitationId } });
+  if (!invitation || invitation.organizationId !== organizationId) throw new NotFoundError("Davet");
+  if (invitation.status !== "PENDING") throw new ConflictError("Bu davet zaten yanıtlanmış");
+
+  await prisma.organizationInvitation.delete({ where: { id: invitationId } });
+
+  return { cancelled: true };
+}
+
+export async function declineInvitation(invitationId: string, userId: string) {
+  const invitation = await prisma.organizationInvitation.findUnique({ where: { id: invitationId } });
+  if (!invitation) throw new NotFoundError("Davet");
+  if (invitation.invitedUserId !== userId) throw new ForbiddenError("Bu davet size ait değil");
+  if (invitation.status !== "PENDING") throw new ConflictError("Bu davet zaten yanıtlanmış");
+
+  await prisma.organizationInvitation.update({
+    where: { id: invitationId },
+    data: { status: "DECLINED", respondedAt: new Date() },
+  });
+
+  return { declined: true };
+}
+
+// --- ÜYE YÖNETİMİ ---
 
 export async function removeMember(organizationId: string, memberUserId: string, userId: string) {
   const isAdmin = await checkAdmin(organizationId, userId);
@@ -124,7 +258,6 @@ export async function removeMember(organizationId: string, memberUserId: string,
   const org = await prisma.organization.findUnique({ where: { id: organizationId } });
   if (org?.ownerId === memberUserId) throw new ForbiddenError("Kurucu organizasyondan çıkarılamaz");
 
-  // Kendini çıkarmaya çalışıyorsa admin de olsa izin ver (ayrılma)
   const member = await checkMembership(organizationId, memberUserId);
   if (!member) throw new NotFoundError("Üye");
 
@@ -135,16 +268,14 @@ export async function removeMember(organizationId: string, memberUserId: string,
     message: `"${org?.name ?? "Organizasyon"}" organizasyonundan çıkarıldınız`,
   });
 
-  // Socket.io emit — üye çıkarıldı
+  await prisma.organizationMember.delete({
+    where: { organizationId_userId: { organizationId, userId: memberUserId } },
+  });
+
   broadcastToOrganization(organizationId, SocketEvents.ORG_MEMBER_REMOVED, {
     organizationId,
     userId: memberUserId,
-    userName: member.user?.name ?? "Bilinmeyen",
-    message: `"${org?.name ?? "Organizasyon"}" organizasyonundan çıkarıldı`,
-  });
-
-  await prisma.organizationMember.delete({
-    where: { organizationId_userId: { organizationId, userId: memberUserId } },
+    userName: member.user.name,
   });
 }
 
@@ -179,13 +310,11 @@ export async function updateMemberRole(organizationId: string, input: UpdateMemb
     });
   }
 
-  // Socket.io emit — rol değişti
   broadcastToOrganization(organizationId, SocketEvents.ORG_MEMBER_ROLE_CHANGED, {
     organizationId,
     userId: input.userId,
-    userName: updated.user?.name ?? "Bilinmeyen",
+    userName: updated.user.name,
     role: input.role,
-    message: `"${org.name}" organizasyonunda rolü değiştirildi: ${input.role}`,
   });
 
   return updated;

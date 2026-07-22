@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { NotFoundError, ForbiddenError } from "@/utils/errors";
-import { getIO, broadcastToProject, SocketEvents } from "@/server/socket";
+import { broadcastToProject, SocketEvents } from "@/server/socket";
 import type { CreateColumnInput, UpdateColumnInput } from "@/schemas/column.schema";
 
 // Projenin organizasyonuna üye mi kontrol et
@@ -48,13 +48,12 @@ export async function createColumn(projectId: string, input: CreateColumnInput, 
     },
   });
 
-  // Socket.io emit — yeni kolon oluşturuldu
   broadcastToProject(projectId, SocketEvents.COLUMN_CREATED, {
     id: column.id,
     name: column.name,
     projectId,
     position: column.position,
-    wipLimit: column.wipLimit ?? undefined,
+    wipLimit: column.wipLimit ?? null,
     isDone: column.isDone,
   });
 
@@ -95,13 +94,12 @@ export async function updateColumn(columnId: string, input: UpdateColumnInput, u
     data: input,
   });
 
-  // Socket.io emit — kolon güncellendi
   broadcastToProject(column.projectId, SocketEvents.COLUMN_UPDATED, {
     id: updated.id,
     name: updated.name,
     projectId: column.projectId,
     position: updated.position,
-    wipLimit: updated.wipLimit ?? undefined,
+    wipLimit: updated.wipLimit ?? null,
     isDone: updated.isDone,
   });
 
@@ -116,11 +114,9 @@ export async function deleteColumn(columnId: string, userId: string) {
 
   await prisma.column.delete({ where: { id: columnId } });
 
-  // Socket.io emit — kolon silindi
   broadcastToProject(column.projectId, SocketEvents.COLUMN_DELETED, {
     columnId,
     projectId: column.projectId,
-    deletedBy: userId,
   });
 }
 
