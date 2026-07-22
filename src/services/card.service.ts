@@ -1,6 +1,8 @@
 import { prisma } from "@/lib/prisma";
 import { NotFoundError, ForbiddenError } from "@/utils/errors";
 import * as notificationService from "@/services/notification.service";
+import { notifyBlockerResolved } from "@/services/dependency.service";
+import { logActivity } from "@/services/activity.service";
 import { broadcastToProject, SocketEvents } from "@/server/socket";
 import type { CreateCardInput, UpdateCardInput } from "@/schemas/card.schema";
 import type { Priority } from "@prisma/client";
@@ -15,7 +17,7 @@ const assigneeInclude = {
 async function checkColumnAccess(columnId: string, userId: string) {
   const column = await prisma.column.findUnique({
     where: { id: columnId },
-    select: { projectId: true, project: { select: { organizationId: true } } },
+    select: { name: true, projectId: true, project: { select: { organizationId: true } } },
   });
   if (!column) throw new NotFoundError("Sütun");
 
@@ -29,7 +31,7 @@ async function checkColumnAccess(columnId: string, userId: string) {
   });
   if (!member) throw new ForbiddenError("Bu projeye erişim yetkiniz yok");
 
-  return { role: member.role, projectId: column.projectId };
+  return { role: member.role, projectId: column.projectId, columnName: column.name };
 }
 
 // Fraksiyonel pozisyon hesapla
@@ -115,6 +117,8 @@ export async function createCard(columnId: string, input: CreateCardInput, userI
     position: card.position,
   });
 
+  await logActivity({ projectId, userId, type: "CARD_CREATED", cardId: card.id });
+
   return card;
 }
 
@@ -168,7 +172,7 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
   });
   if (!card) throw new NotFoundError("Kart");
 
-  const { role, projectId } = await checkColumnAccess(card.columnId, userId);
+  const { role, projectId, columnName: oldColumnName } = await checkColumnAccess(card.columnId, userId);
 
   // Kimin kime atanacagina sadece ADMIN karar verir; kart tasima (surukleme)
   // ve diger alanlarin duzenlenmesi tum uyelere acik kalir
@@ -178,9 +182,17 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
 
   // Kolon değişikliği varsa hedef kolonun da erişilebilir olduğunu kontrol et
   const isColumnChange = input.columnId && input.columnId !== card.columnId;
+  let newColumnName: string | undefined;
   if (isColumnChange && input.columnId) {
-    await checkColumnAccess(input.columnId, userId);
+    const destAccess = await checkColumnAccess(input.columnId, userId);
+    newColumnName = destAccess.columnName;
   }
+
+  const hasFieldEdits =
+    input.title !== undefined ||
+    input.description !== undefined ||
+    input.priority !== undefined ||
+    input.dueDate !== undefined;
 
   const oldAssigneeIds = new Set(card.assignees.map((a) => a.userId));
   let newlyAssignedIds: string[] = [];
@@ -244,6 +256,24 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
       position: updated.position,
       projectId,
     });
+
+    await logActivity({
+      projectId,
+      userId,
+      type: "CARD_MOVED",
+      cardId: updated.id,
+      data: { from: oldColumnName, to: newColumnName },
+    });
+
+    // Kart Done sütununa taşındıysa, onu bekleyen kartların sahiplerine haber ver
+    const newColumn = await prisma.column.findUnique({
+      where: { id: updated.columnId },
+      select: { isDone: true },
+    });
+    if (newColumn?.isDone) {
+      await notifyBlockerResolved(updated.id, updated.title);
+      await logActivity({ projectId, userId, type: "CARD_COMPLETED", cardId: updated.id });
+    }
   }
 
   if (newlyAssignedIds.length > 0) {
@@ -252,6 +282,18 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
       cardTitle: updated.title,
       assignees: updated.assignees.map((a) => ({ id: a.user.id, name: a.user.name })),
     });
+
+    await logActivity({
+      projectId,
+      userId,
+      type: "CARD_ASSIGNED",
+      cardId: updated.id,
+      data: { assignedTo: updated.assignees.map((a) => a.user.name) },
+    });
+  }
+
+  if (hasFieldEdits) {
+    await logActivity({ projectId, userId, type: "CARD_UPDATED", cardId: updated.id });
   }
 
   broadcastToProject(projectId, SocketEvents.CARD_UPDATED, {

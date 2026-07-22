@@ -51,6 +51,9 @@ export async function getBoard(projectId: string, userId: string) {
         description: card.description,
         dueDate: card.dueDate?.toISOString().split("T")[0],
         columnId: card.columnId,
+        position: card.position,
+        priority: card.priority,
+        lastActivityAt: card.lastActivityAt.toISOString(),
         assignees: card.assignees.map((a) => ({ id: a.user.id, name: a.user.name })),
         labels: card.labels.map((cl) => ({
           id: cl.label.id,

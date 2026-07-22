@@ -38,6 +38,10 @@ export enum SocketEvents {
   COMMENT_ADDED = "comment:added",
   COMMENT_UPDATED = "comment:updated",
   COMMENT_DELETED = "comment:deleted",
+
+  // Bağımlılık
+  DEPENDENCY_ADDED = "dependency:added",
+  DEPENDENCY_REMOVED = "dependency:removed",
 }
 
 export interface AuthenticatedSocket extends Socket {

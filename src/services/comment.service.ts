@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { NotFoundError, ForbiddenError } from "@/utils/errors";
+import { logActivity } from "@/services/activity.service";
 import { broadcastToProject, SocketEvents } from "@/server/socket";
 import type { CreateCommentInput, UpdateCommentInput } from "@/schemas/comment.schema";
 
@@ -59,6 +60,14 @@ export async function createComment(cardId: string, input: CreateCommentInput, u
     authorName: comment.author.name,
     text: comment.text,
     createdAt: comment.createdAt.toISOString(),
+  });
+
+  await logActivity({
+    projectId,
+    userId,
+    type: "COMMENT_ADDED",
+    cardId,
+    data: { preview: comment.text.slice(0, 80) },
   });
 
   return comment;
