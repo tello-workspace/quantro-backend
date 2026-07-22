@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { NotFoundError, ForbiddenError } from "@/utils/errors";
 import * as notificationService from "@/services/notification.service";
+import { broadcastToOrganization, SocketEvents } from "@/server/socket";
 import type { CreateProjectInput, UpdateProjectInput } from "@/schemas/project.schema";
 
 // Organization üyeliğini kontrol et
@@ -46,6 +47,14 @@ export async function createProject(organizationId: string, input: CreateProject
     `"${project.name}" projesi oluşturuldu`,
     userId, // yapan hariç
   );
+
+  broadcastToOrganization(organizationId, SocketEvents.PROJECT_CREATED, {
+    id: project.id,
+    name: project.name,
+    description: project.description,
+    organizationId,
+    ownerId: userId,
+  });
 
   return project;
 }
@@ -106,6 +115,14 @@ export async function updateProject(organizationId: string, projectId: string, i
     data: input,
   });
 
+  broadcastToOrganization(organizationId, SocketEvents.PROJECT_UPDATED, {
+    id: updated.id,
+    name: updated.name,
+    description: updated.description,
+    organizationId,
+    ownerId: updated.ownerId,
+  });
+
   return updated;
 }
 
@@ -131,4 +148,9 @@ export async function deleteProject(organizationId: string, projectId: string, u
   );
 
   await prisma.project.delete({ where: { id: projectId } });
+
+  broadcastToOrganization(organizationId, SocketEvents.PROJECT_DELETED, {
+    projectId,
+    projectName: project.name,
+  });
 }

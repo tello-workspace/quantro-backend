@@ -31,7 +31,8 @@ export async function getBoard(projectId: string, userId: string) {
       cards: {
         orderBy: { position: "asc" },
         include: {
-          assignee: { select: { id: true, name: true } },
+          assignees: { include: { user: { select: { id: true, name: true } } } },
+          labels: { include: { label: true } },
         },
       },
     },
@@ -50,11 +51,12 @@ export async function getBoard(projectId: string, userId: string) {
         description: card.description,
         dueDate: card.dueDate?.toISOString().split("T")[0],
         columnId: card.columnId,
-        assigneeId: card.assigneeId,
-        assignee: card.assignee?.name ?? null,
-        assigneeAvatar: card.assignee?.name
-          ? card.assignee.name.split(" ").map((n: string) => n[0]).join("").toUpperCase()
-          : null,
+        assignees: card.assignees.map((a) => ({ id: a.user.id, name: a.user.name })),
+        labels: card.labels.map((cl) => ({
+          id: cl.label.id,
+          name: cl.label.name,
+          color: cl.label.color,
+        })),
       };
     }
     boardColumns[col.id] = {

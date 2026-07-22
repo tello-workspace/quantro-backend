@@ -14,7 +14,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   try {
     const user = (request as AuthenticatedRequest).user;
     const body = await request.json();
-    const { columnId, title, description, priority, assigneeId, dueDate } = body;
+    const { columnId, title, description, priority, assigneeIds, dueDate } = body;
     if (!columnId || !title) {
       return errorResponse("columnId ve title zorunludur", 400, "VALIDATION_ERROR");
     }
@@ -23,7 +23,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       title,
       description: description || undefined,
       priority: priority || "MEDIUM",
-      assigneeId: assigneeId || undefined,
+      assigneeIds: Array.isArray(assigneeIds) ? assigneeIds : undefined,
       dueDate: dueDate || undefined,
     }, user.id);
 
@@ -33,11 +33,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       description: card.description,
       dueDate: card.dueDate?.toISOString().split("T")[0],
       columnId: card.columnId,
-      assigneeId: (card as any).assignee?.id ?? null,
-      assignee: (card as any).assignee?.name ?? null,
-      assigneeAvatar: (card as any).assignee?.name
-        ? (card as any).assignee.name.split(" ").map((n: string) => n[0]).join("").toUpperCase()
-        : null,
+      assignees: card.assignees.map((a) => ({ id: a.user.id, name: a.user.name })),
     }, 201);
   } catch (error) {
     if (error instanceof AppError) {

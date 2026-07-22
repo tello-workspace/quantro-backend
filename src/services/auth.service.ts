@@ -1,4 +1,5 @@
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
 import { signToken } from "@/utils/jwt";
 import { ConflictError, UnauthorizedError } from "@/utils/errors";
@@ -51,6 +52,29 @@ export async function login(input: LoginInput): Promise<AuthResult> {
 
   if (!isValid) {
     throw new UnauthorizedError("Email veya şifre hatalı");
+  }
+
+  const token = signToken({ userId: user.id, email: user.email });
+
+  return {
+    token,
+    user: { id: user.id, name: user.name, email: user.email },
+  };
+}
+
+// Google/Apple gibi OAuth saglayicilarindan dogrulanmis email+isim ile giris.
+// Kullanici yoksa olusturulur (rastgele, bilinmeyen bir parola hash'iyle -
+// bu hesapla normal email/sifre login'i asla basarili olmaz).
+export async function oauthLogin(email: string, name: string): Promise<AuthResult> {
+  let user = await prisma.user.findUnique({ where: { email } });
+
+  if (!user) {
+    const randomPassword = crypto.randomBytes(32).toString("hex");
+    const passwordHash = await bcrypt.hash(randomPassword, SALT_ROUNDS);
+
+    user = await prisma.user.create({
+      data: { name, email, passwordHash },
+    });
   }
 
   const token = signToken({ userId: user.id, email: user.email });

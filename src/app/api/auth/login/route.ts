@@ -3,9 +3,13 @@ import { loginSchema } from "@/schemas/auth.schema";
 import * as authService from "@/services/auth.service";
 import { successResponse, errorResponse } from "@/utils/api-response";
 import { validateBody } from "@/middleware/validate";
+import { checkRateLimit } from "@/middleware/rateLimit";
 import { AppError } from "@/utils/errors";
 
 export async function POST(request: NextRequest) {
+  const rateLimitError = checkRateLimit(request, "login");
+  if (rateLimitError) return rateLimitError;
+
   try {
     const body = await validateBody(request, loginSchema);
     if (body instanceof Response) return body;

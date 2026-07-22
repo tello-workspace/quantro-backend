@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { NotFoundError, ForbiddenError } from "@/utils/errors";
+import { broadcastToUser, SocketEvents } from "@/server/socket";
 import type { NotificationType } from "@prisma/client";
 
 interface CreateNotificationInput {
@@ -7,6 +8,7 @@ interface CreateNotificationInput {
   type: NotificationType;
   message: string;
   cardId?: string;
+  invitationId?: string;
 }
 
 export async function createNotification(input: CreateNotificationInput) {
@@ -16,11 +18,14 @@ export async function createNotification(input: CreateNotificationInput) {
       type: input.type,
       message: input.message,
       cardId: input.cardId,
+      invitationId: input.invitationId,
     },
     include: {
       card: { select: { id: true, title: true } },
     },
   });
+
+  broadcastToUser(input.userId, SocketEvents.NOTIFICATION_NEW, notification);
 
   return notification;
 }
@@ -35,6 +40,7 @@ export async function getNotifications(userId: string, unreadOnly?: boolean) {
     take: 50,
     include: {
       card: { select: { id: true, title: true } },
+      invitation: { select: { id: true, status: true } },
     },
   });
 
@@ -62,6 +68,8 @@ export async function markAsRead(notificationId: string, userId: string) {
     data: { read: true },
   });
 
+  broadcastToUser(userId, SocketEvents.NOTIFICATION_READ, { notificationId, read: true });
+
   return updated;
 }
 
@@ -70,6 +78,8 @@ export async function markAllAsRead(userId: string) {
     where: { userId, read: false },
     data: { read: true },
   });
+
+  broadcastToUser(userId, SocketEvents.NOTIFICATION_ALL_READ, { success: true });
 
   return { success: true };
 }
@@ -98,4 +108,15 @@ export async function broadcastToOrganization(
       message,
     })),
   });
+
+  const createdAt = new Date().toISOString();
+  for (const member of filtered) {
+    broadcastToUser(member.userId, SocketEvents.NOTIFICATION_NEW, {
+      userId: member.userId,
+      type,
+      message,
+      read: false,
+      createdAt,
+    });
+  }
 }

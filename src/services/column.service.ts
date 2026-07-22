@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { NotFoundError, ForbiddenError } from "@/utils/errors";
+import { broadcastToProject, SocketEvents } from "@/server/socket";
 import type { CreateColumnInput, UpdateColumnInput } from "@/schemas/column.schema";
 
 // Projenin organizasyonuna üye mi kontrol et
@@ -47,6 +48,15 @@ export async function createColumn(projectId: string, input: CreateColumnInput, 
     },
   });
 
+  broadcastToProject(projectId, SocketEvents.COLUMN_CREATED, {
+    id: column.id,
+    name: column.name,
+    projectId,
+    position: column.position,
+    wipLimit: column.wipLimit ?? null,
+    isDone: column.isDone,
+  });
+
   return column;
 }
 
@@ -84,6 +94,15 @@ export async function updateColumn(columnId: string, input: UpdateColumnInput, u
     data: input,
   });
 
+  broadcastToProject(column.projectId, SocketEvents.COLUMN_UPDATED, {
+    id: updated.id,
+    name: updated.name,
+    projectId: column.projectId,
+    position: updated.position,
+    wipLimit: updated.wipLimit ?? null,
+    isDone: updated.isDone,
+  });
+
   return updated;
 }
 
@@ -94,6 +113,11 @@ export async function deleteColumn(columnId: string, userId: string) {
   await checkProjectAccess(column.projectId, userId);
 
   await prisma.column.delete({ where: { id: columnId } });
+
+  broadcastToProject(column.projectId, SocketEvents.COLUMN_DELETED, {
+    columnId,
+    projectId: column.projectId,
+  });
 }
 
 export async function reorderColumns(projectId: string, columnIds: string[], userId: string) {
