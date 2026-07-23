@@ -147,11 +147,6 @@ export async function deleteProject(organizationId: string, projectId: string, u
     userId, // yapan hariç
   );
 
-  broadcastToOrganization(organizationId, SocketEvents.PROJECT_DELETED, {
-    projectId: project.id,
-    projectName: project.name,
-  });
-
   await prisma.project.delete({ where: { id: projectId } });
 
   broadcastToOrganization(organizationId, SocketEvents.PROJECT_DELETED, {

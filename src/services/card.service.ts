@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { NotFoundError, ForbiddenError } from "@/utils/errors";
 import * as notificationService from "@/services/notification.service";
-import { broadcastToProject, broadcastToCard, SocketEvents } from "@/server/socket";
+import { broadcastToProject, SocketEvents } from "@/server/socket";
 import type { CreateCardInput, UpdateCardInput } from "@/schemas/card.schema";
 import type { Priority } from "@prisma/client";
 
