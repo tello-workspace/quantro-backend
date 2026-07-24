@@ -4,6 +4,7 @@ import * as authService from "@/services/auth.service";
 import { successResponse, errorResponse } from "@/utils/api-response";
 import { validateBody } from "@/middleware/validate";
 import { checkRateLimit } from "@/middleware/rateLimit";
+import { checkIdempotency, clearIdempotency, failIdempotency } from "@/middleware/idempotency";
 import { AppError } from "@/utils/errors";
 
 export async function POST(request: NextRequest) {
@@ -14,8 +15,18 @@ export async function POST(request: NextRequest) {
     const body = await validateBody(request, registerSchema);
     if (body instanceof Response) return body;
 
-    const result = await authService.register(body);
-    return successResponse(result, 201);
+    // Register'da userId yok, email'i kullan
+    const idem = checkIdempotency(request, body.email || "unknown", body);
+    if (idem instanceof Response) return idem;
+
+    try {
+      const result = await authService.register(body);
+      clearIdempotency(idem.key);
+      return successResponse(result, 201);
+    } catch (err) {
+      failIdempotency(idem.key);
+      throw err;
+    }
   } catch (error) {
     console.error("REGISTER ERROR:", error);
     if (error instanceof AppError) {
