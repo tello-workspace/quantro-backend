@@ -110,9 +110,24 @@ async function callOpenAI(provider: AIProvider, messages: ChatMessage[], signal?
     return `⚠️ AI servisi şu anda kullanılamıyor. (Hata: ${response.status})`;
   }
 
-  const data = await response.json();
-  const content = data.choices?.[0]?.message?.content;
-  if (!content) return "⚠️ AI asistanı boş cevap döndü.";
+  // Bazı modeller (UwU gibi) JSON sonunda "data: [DONE]" SSE eki gönderebilir
+  let raw = await response.text();
+  raw = raw.replace(/\n?data:\s*\[DONE\]\s*$/i, "").trim();
+
+  let data: Record<string, unknown>;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    console.error("[AI] JSON parse hatası, raw:", raw.slice(0, 500));
+    return "⚠️ AI servisinden geçersiz yanıt alındı.";
+  }
+
+  const choices = (data as any).choices;
+  const msg = choices?.[0]?.message as Record<string, unknown> | undefined;
+  const content = msg?.content || msg?.reasoning_content || "";
+  if (typeof content !== "string" || !content.trim()) {
+    return "⚠️ AI asistanı boş cevap döndü.";
+  }
 
   return content;
 }
