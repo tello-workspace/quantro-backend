@@ -6,16 +6,31 @@ interface ChatMessage {
 }
 
 interface AIProvider {
+  provider: "openai" | "google-gemini";
   baseUrl: string;
   apiKey: string;
   model: string;
 }
 
 function getProvider(): AIProvider {
+  const provider = (process.env.AI_PROVIDER || "openai") as AIProvider["provider"];
+  const apiKey = process.env.AI_API_KEY || "";
+
+  if (provider === "google-gemini") {
+    return {
+      provider: "google-gemini",
+      baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+      apiKey,
+      model: process.env.AI_MODEL || "gemini-1.5-flash",
+    };
+  }
+
+  // Default: OpenAI-compatible
   return {
+    provider: "openai",
     baseUrl: process.env.AI_BASE_URL || "https://api.openai.com/v1",
-    apiKey: process.env.AI_API_KEY || "",
-    model: process.env.AI_MODEL || "gpt-3.5-turbo",
+    apiKey,
+    model: process.env.AI_MODEL || "gpt-4o-mini",
   };
 }
 
@@ -71,19 +86,93 @@ async function getBoardContext(projectId: string): Promise<string> {
   return parts.join("\n\n");
 }
 
+async function callOpenAI(provider: AIProvider, messages: ChatMessage[], signal?: AbortSignal): Promise<string> {
+  const response = await fetch(`${provider.baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${provider.apiKey}`,
+    },
+    body: JSON.stringify({
+      model: provider.model,
+      messages,
+      max_tokens: 1024,
+      temperature: 0.7,
+    }),
+    signal,
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    console.error("[AI] OpenAI API hatası:", response.status, errorBody);
+    if (response.status === 401) return "⚠️ API anahtarı geçersiz. Lütfen yöneticinizle iletişime geçin.";
+    if (response.status === 429) return "⚠️ Çok fazla istek gönderildi. Lütfen biraz bekleyip tekrar deneyin.";
+    return `⚠️ AI servisi şu anda kullanılamıyor. (Hata: ${response.status})`;
+  }
+
+  const data = await response.json();
+  const content = data.choices?.[0]?.message?.content;
+  if (!content) return "⚠️ AI asistanı boş cevap döndü.";
+
+  return content;
+}
+
+async function callGemini(provider: AIProvider, messages: ChatMessage[], signal?: AbortSignal): Promise<string> {
+  // OpenAI mesaj formatını Gemini'ye çevir
+  const contents: { role: string; parts: { text: string }[] }[] = [];
+  let systemInstruction = "";
+
+  for (const msg of messages) {
+    if (msg.role === "system") {
+      systemInstruction += (systemInstruction ? "\n" : "") + msg.content;
+      continue;
+    }
+    contents.push({
+      role: msg.role === "assistant" ? "model" : "user",
+      parts: [{ text: msg.content }],
+    });
+  }
+
+  const body: Record<string, unknown> = { contents };
+  if (systemInstruction) {
+    body.system_instruction = { parts: [{ text: systemInstruction }] };
+  }
+
+  const url = `${provider.baseUrl}/models/${provider.model}:generateContent?key=${provider.apiKey}`;
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal,
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    console.error("[AI] Gemini API hatası:", response.status, errorBody);
+    if (response.status === 400) return "⚠️ İstek formatı geçersiz.";
+    if (response.status === 403) return "⚠️ API anahtarı geçersiz veya yetkisiz.";
+    return `⚠️ AI servisi şu anda kullanılamıyor. (Hata: ${response.status})`;
+  }
+
+  const data = await response.json();
+  const content = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!content) return "⚠️ AI asistanı boş cevap döndü.";
+
+  return content;
+}
+
 export async function sendMessage(
   projectId: string,
-  userId: string,
+  _userId: string,
   messages: ChatMessage[],
 ): Promise<string> {
   const provider = getProvider();
 
   if (!provider.apiKey) {
-    // API key yoksa demo/fallback cevap döndür
-    return "⚠️ AI asistanı yapılandırılmamış. Lütfen yöneticinizle iletişime geçin.\n\n(.env dosyasında AI_API_KEY, AI_BASE_URL ve AI_MODEL değişkenlerini ayarlayın.)";
+    return "⚠️ AI asistanı yapılandırılmamış. Lütfen yöneticinizle iletişime geçin.\n\n(.env dosyasında AI_API_KEY ve AI_PROVIDER değişkenlerini ayarlayın.)";
   }
 
-  // Proje bilgilerini al
   const project = await prisma.project.findUnique({
     where: { id: projectId },
     select: { name: true },
@@ -92,44 +181,28 @@ export async function sendMessage(
   const boardContext = await getBoardContext(projectId);
   const systemPrompt = buildSystemPrompt(project?.name || "Proje", boardContext);
 
-  // Mevcut mesaj geçmişinin son 20 mesajını kullan, başa system mesajını ekle
   const recentMessages = messages.slice(-20);
   const apiMessages = [
     { role: "system" as const, content: systemPrompt },
     ...recentMessages.filter((m) => m.role !== "system"),
   ];
 
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
+
   try {
-    const response = await fetch(`${provider.baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${provider.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: provider.model,
-        messages: apiMessages,
-        max_tokens: 1024,
-        temperature: 0.7,
-      }),
-    });
-
-    if (!response.ok) {
-      const errorBody = await response.text();
-      console.error("[AI] API hatası:", response.status, errorBody);
-      return `⚠️ AI servisi şu anda kullanılamıyor. (Hata: ${response.status})`;
+    if (provider.provider === "google-gemini") {
+      return await callGemini(provider, apiMessages, controller.signal);
     }
-
-    const data = await response.json();
-    const content = data.choices?.[0]?.message?.content;
-    if (!content) {
-      return "⚠️ AI asistanı boş cevap döndü.";
+    return await callOpenAI(provider, apiMessages, controller.signal);
+  } catch (error: unknown) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      return "⚠️ AI servisi zaman aşımına uğradı. Lütfen daha kısa mesajlarla tekrar deneyin.";
     }
-
-    return content;
-  } catch (error) {
     console.error("[AI] İstek hatası:", error);
     return "⚠️ AI servisine bağlanırken bir hata oluştu.";
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -160,28 +233,22 @@ Dikkat edilmesi gereken noktalar:
 
 Kısa ve net Türkçe cevap ver.`;
 
-  try {
-    const response = await fetch(`${provider.baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${provider.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: provider.model,
-        messages: [
-          { role: "system", content: "Sen bir proje yönetimi danışmanısın." },
-          { role: "user", content: prompt },
-        ],
-        max_tokens: 512,
-        temperature: 0.5,
-      }),
-    });
+  const messages: ChatMessage[] = [
+    { role: "system", content: "Sen bir proje yönetimi danışmanısın." },
+    { role: "user", content: prompt },
+  ];
 
-    if (!response.ok) return "";
-    const data = await response.json();
-    return data.choices?.[0]?.message?.content || "";
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+
+  try {
+    if (provider.provider === "google-gemini") {
+      return await callGemini(provider, messages, controller.signal);
+    }
+    return await callOpenAI(provider, messages, controller.signal);
   } catch {
     return "";
+  } finally {
+    clearTimeout(timeout);
   }
 }

@@ -17,6 +17,7 @@ export async function POST(request: NextRequest) {
     const result = await authService.login(body);
     return successResponse(result);
   } catch (error) {
+    console.error("LOGIN ERROR:", error);
     if (error instanceof AppError) {
       return errorResponse(error.message, error.statusCode, error.code);
     }
