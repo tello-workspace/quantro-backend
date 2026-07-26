@@ -40,7 +40,9 @@ function getProvider(): AIProvider {
       provider: "google-gemini",
       baseUrl: "https://generativelanguage.googleapis.com/v1beta",
       apiKey,
-      model: process.env.AI_MODEL || "gemini-1.5-flash",
+      // Sabit surum yerine "latest" takma adi: gemini-1.5/2.0/2.5 gibi
+      // eski surumler yeni anahtarlara kapatiliyor (404 ya da kota 0).
+      model: process.env.AI_MODEL || "gemini-flash-latest",
     };
   }
 
@@ -445,6 +447,22 @@ async function callGeminiRaw(
     if (response.status === 400) return { parts: [], error: "⚠️ İstek formatı geçersiz." };
     if (response.status === 403)
       return { parts: [], error: "⚠️ API anahtarı geçersiz veya yetkisiz." };
+    if (response.status === 404)
+      return {
+        parts: [],
+        error: `⚠️ "${provider.model}" modeli bu API anahtarıyla kullanılamıyor. .env içindeki AI_MODEL değerini "gemini-flash-latest" yapın.`,
+      };
+    if (response.status === 429) {
+      // limit: 0 → o modelde hic ucretsiz kota yok (surum kapatilmis olabilir);
+      // diger 429'lar gercek hiz siniri, beklemek yeterli.
+      const noQuota = errorBody.includes("limit: 0");
+      return {
+        parts: [],
+        error: noQuota
+          ? `⚠️ Bu API anahtarının "${provider.model}" modelinde kotası yok. .env içinde AI_MODEL="gemini-flash-latest" deneyin veya faturalandırmayı açın.`
+          : "⚠️ İstek sınırına takıldınız. Lütfen birkaç saniye sonra tekrar deneyin.",
+      };
+    }
     return {
       parts: [],
       error: `⚠️ AI servisi şu anda kullanılamıyor. (Hata: ${response.status})`,
