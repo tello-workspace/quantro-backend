@@ -582,30 +582,34 @@ Kullanıcılara kısa, net ve Türkçe cevap ver. İşlem başarılı olduğunda
 }
 
 async function getBoardContext(projectId: string): Promise<string> {
-  const project = await prisma.project.findUnique({
-    where: { id: projectId },
-    include: {
-      columns: {
-        orderBy: { position: "asc" },
-        include: {
-          cards: {
-            include: {
-              assignees: { include: { user: { select: { id: true, name: true } } } },
-              labels: { include: { label: { select: { name: true, color: true } } } },
+  // Ic ice iliskiler tek SQL'de (join) ve uyeler paralel: onceden 7-8
+  // ayri gidis-donus vardi, her AI mesajinda tekrar odeniyordu.
+  const [project, members] = await Promise.all([
+    prisma.project.findUnique({
+      where: { id: projectId },
+      relationLoadStrategy: "join",
+      include: {
+        columns: {
+          orderBy: { position: "asc" },
+          include: {
+            cards: {
+              include: {
+                assignees: { include: { user: { select: { id: true, name: true } } } },
+                labels: { include: { label: { select: { name: true, color: true } } } },
+              },
             },
           },
         },
       },
-    },
-  });
+    }),
+    prisma.organizationMember.findMany({
+      where: { organization: { projects: { some: { id: projectId } } } },
+      relationLoadStrategy: "join",
+      include: { user: { select: { id: true, name: true, email: true } } },
+    }),
+  ]);
 
   if (!project) return "";
-
-  // Organizasyon üyelerini bul
-  const members = await prisma.organizationMember.findMany({
-    where: { organizationId: project.organizationId },
-    include: { user: { select: { id: true, name: true, email: true } } },
-  });
 
   const parts: string[] = [];
 
@@ -651,22 +655,24 @@ export async function sendMessage(
     return "⚠️ AI asistanı yapılandırılmamış. Lütfen yöneticinizle iletişime geçin.\n\n(.env dosyasında AI_API_KEY ve AI_PROVIDER değişkenlerini ayarlayın.)";
   }
 
-  const project = await prisma.project.findUnique({
-    where: { id: projectId },
-    select: { name: true, organizationId: true },
-  });
+  // Uc hazirlik sorgusu da birbirinden bagimsiz; sirayla beklemek yerine
+  // paralel calisiyorlar (uzak DB'de her gidis-donus ~140ms).
+  // Uyelik projenin organizationId'sine bagli oldugu icin dogrudan proje
+  // uzerinden filtreleniyor, boylece proje sorgusunu beklemesi gerekmiyor.
+  const [project, membership, boardContext] = await Promise.all([
+    prisma.project.findUnique({
+      where: { id: projectId },
+      select: { name: true, organizationId: true },
+    }),
+    prisma.organizationMember.findFirst({
+      where: { userId, organization: { projects: { some: { id: projectId } } } },
+      select: { role: true, user: { select: { name: true } } },
+    }),
+    getBoardContext(projectId),
+  ]);
+
   if (!project) return "⚠️ Proje bulunamadı.";
-
-  // Kullanicinin bu organizasyondaki rolu; sistem promptu buna gore kurulur
-  const membership = await prisma.organizationMember.findUnique({
-    where: {
-      organizationId_userId: { organizationId: project.organizationId, userId },
-    },
-    include: { user: { select: { name: true } } },
-  });
   if (!membership) return "⚠️ Bu projeye erişim yetkiniz yok.";
-
-  const boardContext = await getBoardContext(projectId);
   const systemPrompt = buildSystemPrompt(
     project.name,
     boardContext,

@@ -64,21 +64,28 @@ export async function getMyOrganizations(userId: string) {
 }
 
 export async function getOrganizationById(organizationId: string, userId: string) {
-  const member = await checkMembership(organizationId, userId);
-  if (!member) throw new ForbiddenError("Bu organizasyona erişim yetkiniz yok");
+  // Uyelik kontrolu ile asil sorgu birbirinden bagimsiz: paralel calistirip
+  // bir gidis-donus kazaniyoruz. Yetki yoksa veri donmeden hata firlatiliyor.
+  // relationLoadStrategy: "join" ise members -> user ve projects iliskilerini
+  // ayri sorgular yerine tek SQL'de getiriyor.
+  const [member, org] = await Promise.all([
+    checkMembership(organizationId, userId),
+    prisma.organization.findUnique({
+      where: { id: organizationId },
+      relationLoadStrategy: "join",
+      include: {
+        members: {
+          include: { user: { select: { id: true, name: true, email: true } } },
+        },
+        projects: {
+          select: { id: true, name: true, description: true, createdAt: true },
+          orderBy: { createdAt: "desc" },
+        },
+      },
+    }),
+  ]);
 
-  const org = await prisma.organization.findUnique({
-    where: { id: organizationId },
-    include: {
-      members: {
-        include: { user: { select: { id: true, name: true, email: true } } },
-      },
-      projects: {
-        select: { id: true, name: true, description: true, createdAt: true },
-        orderBy: { createdAt: "desc" },
-      },
-    },
-  });
+  if (!member) throw new ForbiddenError("Bu organizasyona erişim yetkiniz yok");
 
   if (!org) throw new NotFoundError("Organizasyon");
 

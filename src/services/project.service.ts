@@ -60,36 +60,42 @@ export async function createProject(organizationId: string, input: CreateProject
 }
 
 export async function getProjects(organizationId: string, userId: string) {
-  const member = await checkMembership(organizationId, userId);
-  if (!member) throw new ForbiddenError("Bu organizasyona erişim yetkiniz yok");
+  // Uyelik kontrolu ile liste sorgusu bagimsiz; paralel calisip bir
+  // gidis-donus kazandiriyorlar. Yetki yoksa veri donmeden hata firlatilir.
+  const [member, projects] = await Promise.all([
+    checkMembership(organizationId, userId),
+    prisma.project.findMany({
+      where: { organizationId },
+      include: {
+        _count: { select: { columns: true } },
+      },
+      orderBy: { createdAt: "desc" },
+    }),
+  ]);
 
-  const projects = await prisma.project.findMany({
-    where: { organizationId },
-    include: {
-      _count: { select: { columns: true } },
-    },
-    orderBy: { createdAt: "desc" },
-  });
+  if (!member) throw new ForbiddenError("Bu organizasyona erişim yetkiniz yok");
 
   return projects;
 }
 
 export async function getProjectById(organizationId: string, projectId: string, userId: string) {
-  const member = await checkMembership(organizationId, userId);
-  if (!member) throw new ForbiddenError("Bu organizasyona erişim yetkiniz yok");
-
-  const project = await prisma.project.findFirst({
-    where: { id: projectId, organizationId },
-    include: {
-      columns: {
-        orderBy: { position: "asc" },
-        include: {
-          _count: { select: { cards: true } },
+  const [member, project] = await Promise.all([
+    checkMembership(organizationId, userId),
+    prisma.project.findFirst({
+      where: { id: projectId, organizationId },
+      include: {
+        columns: {
+          orderBy: { position: "asc" },
+          include: {
+            _count: { select: { cards: true } },
+          },
         },
+        _count: { select: { columns: true } },
       },
-      _count: { select: { columns: true } },
-    },
-  });
+    }),
+  ]);
+
+  if (!member) throw new ForbiddenError("Bu organizasyona erişim yetkiniz yok");
 
   if (!project) throw new NotFoundError("Proje");
 
