@@ -17,15 +17,9 @@ type ErrorPayload = {
   };
 };
 
-const CORS_HEADERS = {
-  "Access-Control-Allow-Origin": "http://localhost:3000",
-  "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization",
-};
-
 export function successResponse<T>(data: T, status = 200) {
   const body: SuccessPayload<T> = { success: true, data };
-  return NextResponse.json(body, { status, headers: CORS_HEADERS });
+  return NextResponse.json(body, { status });
 }
 
 export function errorResponse(
@@ -37,7 +31,7 @@ export function errorResponse(
     success: false,
     error: { code, message },
   };
-  return NextResponse.json(body, { status, headers: CORS_HEADERS });
+  return NextResponse.json(body, { status });
 }
 
 export function validationError(zodError: ZodError) {
@@ -57,5 +51,5 @@ export function validationError(zodError: ZodError) {
       fields,
     },
   };
-  return NextResponse.json(body, { status: 400, headers: CORS_HEADERS });
+  return NextResponse.json(body, { status: 400 });
 }
