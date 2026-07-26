@@ -22,6 +22,7 @@ export async function createNotification(input: CreateNotificationInput) {
     },
     include: {
       card: { select: { id: true, title: true } },
+      invitation: { select: { id: true, status: true } },
     },
   });
 

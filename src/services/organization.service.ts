@@ -258,7 +258,6 @@ export async function removeMember(organizationId: string, memberUserId: string,
   const org = await prisma.organization.findUnique({ where: { id: organizationId } });
   if (org?.ownerId === memberUserId) throw new ForbiddenError("Kurucu organizasyondan çıkarılamaz");
 
-  // Kendini çıkarmaya çalışıyorsa admin de olsa izin ver (ayrılma)
   const member = await checkMembership(organizationId, memberUserId);
   if (!member) throw new NotFoundError("Üye");
 

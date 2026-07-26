@@ -4,6 +4,7 @@ import * as columnService from "@/services/column.service";
 import { successResponse, errorResponse } from "@/utils/api-response";
 import { validateBody } from "@/middleware/validate";
 import { authenticate, AuthenticatedRequest } from "@/middleware/auth";
+import { checkIdempotency, clearIdempotency, failIdempotency } from "@/middleware/idempotency";
 import { AppError } from "@/utils/errors";
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string; projectId: string }> }) {
@@ -33,8 +34,18 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const body = await validateBody(request, createColumnSchema);
     if (body instanceof Response) return body;
 
-    const column = await columnService.createColumn(projectId, body, user.id);
-    return successResponse(column, 201);
+    // Idempotency check
+    const idem = checkIdempotency(request, user.id, body);
+    if (idem instanceof Response) return idem;
+
+    try {
+      const column = await columnService.createColumn(projectId, body, user.id);
+      clearIdempotency(idem.key);
+      return successResponse(column, 201);
+    } catch (err) {
+      failIdempotency(idem.key);
+      throw err;
+    }
   } catch (error) {
     if (error instanceof AppError) {
       return errorResponse(error.message, error.statusCode, error.code);

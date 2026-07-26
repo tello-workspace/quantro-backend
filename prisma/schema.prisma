@@ -41,12 +41,12 @@ enum NotificationType {
   DEADLINE_RISK     // deadline riski tespit edildi
   STALE_CARD        // kartın 7+ gündür hareketsiz
   WIP_EXCEEDED      // sütun WIP limitini aştı
+  ORG_INVITE        // organizasyon daveti (beklemede)
   ORG_JOINED        // organizasyona eklendin
   ORG_REMOVED       // organizasyondan çıkarıldın
   PROJECT_CREATED   // yeni proje oluşturuldu
   PROJECT_DELETED   // bir proje silindi
   ROLE_CHANGED      // rolün değiştirildi
-  ORG_INVITE        // bir organizasyona davet edildin, onay bekliyor
 }
 
 enum InvitationStatus {
@@ -85,7 +85,7 @@ model Organization {
   ownerId     String
   createdAt   DateTime @default(now())
 
-  owner       User                     @relation("OrganizationOwner", fields: [ownerId], references: [id])
+  owner       User                @relation("OrganizationOwner", fields: [ownerId], references: [id])
   members     OrganizationMember[]
   projects    Project[]
   invitations OrganizationInvitation[]
