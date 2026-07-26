@@ -205,6 +205,21 @@ async function executeTool(
     return `❌ Geçersiz argüman formatı: ${argsRaw}`;
   }
 
+  return executeToolByName(name, args, userId, projectId);
+}
+
+// Asil calistirma mantigi. Hem OpenAI (tool_calls) hem Gemini
+// (functionCall) yolu buraya baglanir.
+//
+// Yetki kontrolu bilerek burada YOK: kart olusturma ve gorev atamasi
+// icin ADMIN sarti card.service icinde uygulaniyor. Boylece AI uzerinden
+// gelen istek de arayuzdeki ile birebir ayni kurallara tabi olur.
+async function executeToolByName(
+  name: string,
+  args: Record<string, unknown>,
+  userId: string,
+  projectId: string,
+): Promise<string> {
   try {
     switch (name) {
       case "create_card": {
@@ -351,30 +366,68 @@ async function callOpenAI(
   return { content, tool_calls: toolCalls };
 }
 
-// ─── Gemini (tool desteklemiyor — mevcut halde bırak) ─────────────
+// ─── Gemini (function calling ile) ─────────────────────────────────
 
-async function callGemini(
-  provider: AIProvider,
-  messages: ChatMessage[],
-  signal?: AbortSignal,
-): Promise<string> {
-  const contents: { role: string; parts: { text: string }[] }[] = [];
+type GeminiPart =
+  | { text: string }
+  | { functionCall: { name: string; args?: Record<string, unknown> } }
+  | { functionResponse: { name: string; response: Record<string, unknown> } };
+
+interface GeminiContent {
+  role: "user" | "model";
+  parts: GeminiPart[];
+}
+
+// OpenAI tool tanimlarini Gemini'nin functionDeclarations formatina cevirir.
+// Parametre semasi ikisinde de JSON Schema oldugu icin oldugu gibi gecirilir.
+function toGeminiFunctionDeclarations() {
+  return [
+    {
+      functionDeclarations: TOOLS.map((t) => ({
+        name: t.function.name,
+        description: t.function.description,
+        parameters: t.function.parameters,
+      })),
+    },
+  ];
+}
+
+function toGeminiContents(messages: (ChatMessage | ToolMessage)[]): {
+  contents: GeminiContent[];
+  systemInstruction: string;
+} {
+  const contents: GeminiContent[] = [];
   let systemInstruction = "";
 
   for (const msg of messages) {
     if (msg.role === "system") {
-      systemInstruction += (systemInstruction ? "\n" : "") + msg.content;
+      systemInstruction += (systemInstruction ? "\n" : "") + (msg.content || "");
       continue;
     }
+    if (msg.role === "tool") continue; // Gemini akisinda tool sonuclari ayrica eklenir
+
     contents.push({
       role: msg.role === "assistant" ? "model" : "user",
       parts: [{ text: msg.content || "" }],
     });
   }
 
+  return { contents, systemInstruction };
+}
+
+async function callGeminiRaw(
+  provider: AIProvider,
+  contents: GeminiContent[],
+  systemInstruction: string,
+  withTools: boolean,
+  signal?: AbortSignal,
+): Promise<{ parts: GeminiPart[]; error?: string }> {
   const body: Record<string, unknown> = { contents };
   if (systemInstruction) {
     body.system_instruction = { parts: [{ text: systemInstruction }] };
+  }
+  if (withTools) {
+    body.tools = toGeminiFunctionDeclarations();
   }
 
   const url = `${provider.baseUrl}/models/${provider.model}:generateContent?key=${provider.apiKey}`;
@@ -389,30 +442,116 @@ async function callGemini(
   if (!response.ok) {
     const errorBody = await response.text();
     console.error("[AI] Gemini API hatası:", response.status, errorBody);
-    if (response.status === 400) return "⚠️ İstek formatı geçersiz.";
-    if (response.status === 403) return "⚠️ API anahtarı geçersiz veya yetkisiz.";
-    return `⚠️ AI servisi şu anda kullanılamıyor. (Hata: ${response.status})`;
+    if (response.status === 400) return { parts: [], error: "⚠️ İstek formatı geçersiz." };
+    if (response.status === 403)
+      return { parts: [], error: "⚠️ API anahtarı geçersiz veya yetkisiz." };
+    return {
+      parts: [],
+      error: `⚠️ AI servisi şu anda kullanılamıyor. (Hata: ${response.status})`,
+    };
   }
 
   const data = await response.json();
-  const content = data.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!content) return "⚠️ AI asistanı boş cevap döndü.";
+  const parts: GeminiPart[] = data.candidates?.[0]?.content?.parts ?? [];
+  return { parts };
+}
 
-  return content;
+// Gemini ile cok turlu tool dongusu: model fonksiyon cagirir, sonucu
+// functionResponse olarak geri veririz, model son cevabini uretir.
+async function runGeminiWithTools(
+  provider: AIProvider,
+  messages: (ChatMessage | ToolMessage)[],
+  userId: string,
+  projectId: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const { contents, systemInstruction } = toGeminiContents(messages);
+
+  const MAX_ROUNDS = 4;
+  for (let round = 0; round < MAX_ROUNDS; round++) {
+    const { parts, error } = await callGeminiRaw(
+      provider,
+      contents,
+      systemInstruction,
+      true,
+      signal,
+    );
+    if (error) return error;
+
+    const functionCalls = parts.filter(
+      (p): p is { functionCall: { name: string; args?: Record<string, unknown> } } =>
+        "functionCall" in p,
+    );
+
+    if (functionCalls.length === 0) {
+      const text = parts
+        .filter((p): p is { text: string } => "text" in p)
+        .map((p) => p.text)
+        .join("")
+        .trim();
+      return text || "⚠️ AI asistanı boş cevap döndü.";
+    }
+
+    // Modelin fonksiyon cagrilarini gecmise ekle
+    contents.push({ role: "model", parts });
+
+    const responseParts: GeminiPart[] = [];
+    for (const { functionCall } of functionCalls) {
+      const result = await executeToolByName(
+        functionCall.name,
+        functionCall.args ?? {},
+        userId,
+        projectId,
+      );
+      responseParts.push({
+        functionResponse: {
+          name: functionCall.name,
+          response: { result },
+        },
+      });
+    }
+    contents.push({ role: "user", parts: responseParts });
+  }
+
+  return "⚠️ İşlem çok fazla adım sürdü, tamamlanamadı. Lütfen isteğinizi sadeleştirin.";
 }
 
 // ─── Public API ─────────────────────────────────────────────────────
 
-function buildSystemPrompt(projectName: string, boardContext: string): string {
+function buildSystemPrompt(
+  projectName: string,
+  boardContext: string,
+  userName: string,
+  userRole: "ADMIN" | "MEMBER",
+): string {
+  const isAdmin = userRole === "ADMIN";
+
+  // Yetkiler arayuzdekiyle birebir ayni. Sunucu tarafinda card.service
+  // zaten zorluyor; burada modele de soyluyoruz ki bosuna deneyip
+  // kullaniciya hata mesaji gostermek yerine durumu acikca anlatsin.
+  const permissions = isAdmin
+    ? `Bu kullanıcı bu organizasyonda ADMIN. Tüm işlemleri yapabilirsin:
+- Kart oluşturma, düzenleme, silme, taşıma
+- Görev atama (assign_users) ve atamayı değiştirme
+- Yorum ekleme, kolonları listeleme`
+    : `Bu kullanıcı bu organizasyonda ÜYE (MEMBER), admin DEĞİL. Yetkileri sınırlı:
+- YAPABİLİR: kart düzenleme, kart taşıma, kart silme, yorum ekleme, kolonları listeleme
+- YAPAMAZ: yeni kart oluşturma (create_card) ve görev atama (assign_users)
+
+Üye senden kart oluşturmanı veya birine görev atamanı isterse, bu aracı ÇAĞIRMA.
+Bunun yerine kibarca "görev atama ve kart oluşturma yalnızca adminlerde, organizasyon
+adminine iletebilirsin" de. Yine de denersen sunucu isteği reddeder.`;
+
   return `Sen bir Trello benzeri bir proje yönetim uygulamasının AI asistanısın.
 
-Kullanıcıların isteklerine göre kart oluşturabilir, güncelleyebilir, silebilir, taşıyabilir, kullanıcı atayabilir ve yorum ekleyebilirsin.
+Şu an seninle konuşan kullanıcı: ${userName} (rol: ${userRole})
 
-Yapabileceklerin:
-- Kart oluşturma, düzenleme, silme, taşıma
-- Kullanıcı atama/değiştirme
-- Yorum ekleme
-- Proje kolonlarını listeleme
+${permissions}
+
+Görev atama kuralı: Kullanıcı "X görevini Ahmet'e ata" derse, aşağıdaki listeden
+Ahmet'in kullanıcı ID'sini ve kartın ID'sini bulup assign_users aracını çağır.
+Bir karta birden fazla kişi atanabilir; assigneeIds gönderdiğin liste kartın YENİ
+atanan listesidir (mevcutlara eklemek istiyorsan eskileri de listeye koy).
 
 NOT: Proje ID'si, kolon ID'leri ve kullanıcı ID'leri aşağıda listelenmiştir. Kullanıcıya ID sorma, doğrudan kullan.
 
@@ -496,11 +635,26 @@ export async function sendMessage(
 
   const project = await prisma.project.findUnique({
     where: { id: projectId },
-    select: { name: true },
+    select: { name: true, organizationId: true },
   });
+  if (!project) return "⚠️ Proje bulunamadı.";
+
+  // Kullanicinin bu organizasyondaki rolu; sistem promptu buna gore kurulur
+  const membership = await prisma.organizationMember.findUnique({
+    where: {
+      organizationId_userId: { organizationId: project.organizationId, userId },
+    },
+    include: { user: { select: { name: true } } },
+  });
+  if (!membership) return "⚠️ Bu projeye erişim yetkiniz yok.";
 
   const boardContext = await getBoardContext(projectId);
-  const systemPrompt = buildSystemPrompt(project?.name || "Proje", boardContext);
+  const systemPrompt = buildSystemPrompt(
+    project.name,
+    boardContext,
+    membership.user.name,
+    membership.role as "ADMIN" | "MEMBER",
+  );
 
   const recentMessages = messages.slice(-20);
   const apiMessages = [
@@ -513,8 +667,14 @@ export async function sendMessage(
 
   try {
     if (provider.provider === "google-gemini") {
-      // Gemini — tool desteklemez, direkt metin
-      return await callGemini(provider, apiMessages, controller.signal);
+      // Gemini — functionDeclarations ile ayni araclari kullanir
+      return await runGeminiWithTools(
+        provider,
+        apiMessages,
+        userId,
+        projectId,
+        controller.signal,
+      );
     }
 
     // OpenAI-compatible (UwU dahil) — function calling ile çalışır
@@ -591,7 +751,21 @@ Kısa ve net Türkçe cevap ver.`;
 
   try {
     if (provider.provider === "google-gemini") {
-      return await callGemini(provider, messages, controller.signal);
+      // Icgoru uretiminde arac cagrisina gerek yok, duz metin yeterli
+      const { contents, systemInstruction } = toGeminiContents(messages);
+      const { parts, error } = await callGeminiRaw(
+        provider,
+        contents,
+        systemInstruction,
+        false,
+        controller.signal,
+      );
+      if (error) return "";
+      return parts
+        .filter((p): p is { text: string } => "text" in p)
+        .map((p) => p.text)
+        .join("")
+        .trim();
     }
     const result = await callOpenAI(provider, messages, undefined, controller.signal);
     return result.content;

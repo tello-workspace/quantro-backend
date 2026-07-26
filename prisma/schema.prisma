@@ -74,6 +74,7 @@ model User {
   notifications        Notification[]
   sentInvitations      OrganizationInvitation[] @relation("InvitationSender")
   receivedInvitations  OrganizationInvitation[] @relation("InvitationReceiver")
+  chatMessages         ChatMessage[]
 }
 
 // ---------- ORGANIZATION ----------
@@ -85,10 +86,25 @@ model Organization {
   ownerId     String
   createdAt   DateTime @default(now())
 
-  owner       User                @relation("OrganizationOwner", fields: [ownerId], references: [id])
-  members     OrganizationMember[]
-  projects    Project[]
-  invitations OrganizationInvitation[]
+  owner        User                @relation("OrganizationOwner", fields: [ownerId], references: [id])
+  members      OrganizationMember[]
+  projects     Project[]
+  invitations  OrganizationInvitation[]
+  chatMessages ChatMessage[]
+}
+
+// Organizasyon basina tek sohbet odasi: uyeler ayni akista mesajlasir.
+model ChatMessage {
+  id             String   @id @default(cuid())
+  organizationId String
+  authorId       String
+  text           String
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  author       User         @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt])
 }
 
 // Davet edilen kullanici PENDING durumunda bekler, kabul edince

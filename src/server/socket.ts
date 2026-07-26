@@ -48,6 +48,10 @@ export interface ServerSocketEvents {
   [SocketEvents.COMMENT_UPDATED]: (comment: CommentPayload) => void;
   [SocketEvents.COMMENT_DELETED]: (commentId: string) => void;
 
+  // Organizasyon sohbeti
+  [SocketEvents.CHAT_MESSAGE_NEW]: (message: ChatMessagePayload) => void;
+  [SocketEvents.CHAT_TYPING]: (data: ChatTypingPayload) => void;
+
   // Bağımlılık events
   [SocketEvents.DEPENDENCY_ADDED]: (data: DependencyPayload) => void;
   [SocketEvents.DEPENDENCY_REMOVED]: (data: DependencyPayload) => void;
@@ -104,6 +108,10 @@ export enum SocketEvents {
   COMMENT_ADDED = "comment:added",
   COMMENT_UPDATED = "comment:updated",
   COMMENT_DELETED = "comment:deleted",
+
+  // Organizasyon sohbeti
+  CHAT_MESSAGE_NEW = "chat:message",
+  CHAT_TYPING = "chat:typing",
 
   // Bağımlılık
   DEPENDENCY_ADDED = "dependency:added",
@@ -200,6 +208,22 @@ export interface CommentPayload {
   authorName: string;
   text: string;
   createdAt: string;
+}
+
+export interface ChatMessagePayload {
+  id: string;
+  organizationId: string;
+  authorId: string;
+  authorName: string;
+  text: string;
+  createdAt: string;
+}
+
+export interface ChatTypingPayload {
+  organizationId: string;
+  userId: string;
+  userName: string;
+  isTyping: boolean;
 }
 
 export interface DependencyPayload {
@@ -385,6 +409,26 @@ export function initializeSocket(httpServer: HttpServer): SocketIOServer<ServerS
           isTyping: data.isTyping,
         });
       }
+    });
+
+    // Organizasyon sohbetinde "yaziyor..." bilgisi.
+    // Kalici veri yok; sadece ayni org odasindaki digerlerine iletilir.
+    socket.on(SocketEvents.CHAT_TYPING, (data: { organizationId?: string; isTyping?: boolean }) => {
+      const orgId = data?.organizationId;
+      if (!orgId) return;
+      // Sadece gercekten uyesi oldugu organizasyona yayabilsin.
+      // socket.organizations baglanti anindaki liste; davet kabul edilince
+      // "join:org" ile odaya sonradan girildigi icin oda uyeligi de kabul edilir.
+      const isMember =
+        socket.organizations?.includes(orgId) || socket.rooms.has(`org:${orgId}`);
+      if (!isMember) return;
+
+      socket.to(`org:${orgId}`).emit(SocketEvents.CHAT_TYPING, {
+        organizationId: orgId,
+        userId: socket.userId!,
+        userName: socket.userName!,
+        isTyping: Boolean(data.isTyping),
+      });
     });
 
     // Handle joining specific project room (for real-time board updates)
