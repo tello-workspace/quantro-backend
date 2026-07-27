@@ -901,6 +901,8 @@ export async function generateCardDetails(
   }
 
   const prompt = `Sana verilecek olan görev/todo başlığına göre, bu görev için detaylı, profesyonel bir açıklama (description) ve uygun bir öncelik (LOW, MEDIUM, HIGH, URGENT) önerisi üret. 
+GÖREV BAŞLIĞININ DİLİ HANGİ DİLDEYSE (Türkçe, İngilizce, Almanca vb.), üreteceğin açıklama (description) metni de KESİNLİKLE o dilde olmalıdır.
+
 Görev Başlığı: "${title}"
 
 Yanıtı KESİNLİKLE sadece aşağıdaki JSON formatında ver, XML veya markdown açıklamaları ekleme. JSON dışında bir şey yazarsan sistem hata verecektir.
