@@ -913,19 +913,19 @@ ${boardContext}
 Bugünün tarihi: ${today}
 
 Lütfen bu bilgilere dayanarak:
-1. Diğer görevlerin teslim tarihlerini ve yoğunluğunu analiz ederek, bu yeni görev için gerçekçi ve uygun bir son teslim tarihi (dueDate) öner (YYYY-MM-DD formatında).
-2. Üyelerin mevcut iş yüklerini (yani üzerlerindeki aktif kart sayılarını) ve rollerini analiz ederek, bu göreve en müsait olan veya en az iş yüküne sahip olan en uygun organizasyon üyesinin ID'sini (suggestedAssigneeId) öner.
+1. Diğer görevlerin teslim tarihlerini ve yoğunluğunu analiz ederek, bu yeni görev için gerçekçi ve uygun bir son teslim tarihi (dueDate) belirle (KESİNLİKLE YYYY-MM-DD formatında gerçek bir tarih olmalıdır, "YYYY-MM-DD" gibi bir taslak yazma. Eğer tarih belirlenemezse bugünden 3 gün sonrasını yaz).
+2. Üyelerin mevcut iş yüklerini (yani üzerlerindeki aktif kart sayılarını) analiz ederek, bu göreve en müsait olan (en az iş yüküne sahip) en uygun organizasyon üyesini seç ve onun ID'sini (suggestedAssigneeId) yaz (KESİNLİKLE yukarıda listelenen üyelerden birinin ID'si olmalıdır, "müsait_üye_user_id" gibi bir taslak yazma. Eğer üye yoksa null yaz).
 
 Görev Başlığı: "${title}"
 
-Yanıtı KESİNLİKLE sadece aşağıdaki JSON formatında ver, XML veya markdown açıklamaları ekleme. JSON dışında bir şey yazarsan sistem hata verecektir.
+Yanıtı KESİNLİKLE sadece aşağıdaki JSON formatında ver, XML veya markdown açıklamaları ekleme. JSON dışı hiçbir metin yazma. Tüm alanlar KESİNLİKLE doldurulmalıdır.
 
 Format:
 {
-  "description": "Görev için detaylı, açıklayıcı metin...",
-  "priority": "LOW" | "MEDIUM" | "HIGH" | "URGENT",
-  "dueDate": "YYYY-MM-DD",
-  "suggestedAssigneeId": "müsait_üye_user_id"
+  "description": "görev açıklaması",
+  "priority": "LOW" veya "MEDIUM" veya "HIGH" veya "URGENT",
+  "dueDate": "2026-08-01",
+  "suggestedAssigneeId": "cms2w9f130001jfzcaxxic03q"
 }`;
 
   const messages = [
