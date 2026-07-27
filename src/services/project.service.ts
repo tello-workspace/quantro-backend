@@ -38,7 +38,8 @@ export async function createProject(organizationId: string, input: CreateProject
         create: [
           { name: "To Do", position: 1 },
           { name: "In Progress", position: 2 },
-          { name: "Done", position: 3, isDone: true },
+          { name: "Testing", position: 3 },
+          { name: "Done", position: 4, isDone: true },
         ],
       },
     },

@@ -7,6 +7,8 @@ const cardPayloadSchema = z.object({
   priority: z.enum(["LOW", "MEDIUM", "HIGH", "URGENT"]).optional(),
   dueDate: z.string().nullable().optional(),
   assigneeIds: z.array(z.string()).optional(),
+  labelIds: z.array(z.string()).optional(),
+  blockerIds: z.array(z.string()).optional(),
 });
 
 export const createChangeRequestSchema = z.discriminatedUnion("type", [

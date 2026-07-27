@@ -385,6 +385,7 @@ async function callOpenAI(
   messages: (ChatMessage | ToolMessage)[],
   tools?: typeof TOOLS,
   signal?: AbortSignal,
+  responseFormat?: { type: "json_object" },
 ): Promise<{ content: string; tool_calls?: ToolCall[] }> {
   const body: Record<string, unknown> = {
     model: provider.model,
@@ -396,6 +397,10 @@ async function callOpenAI(
   if (tools) {
     body.tools = tools;
     body.tool_choice = "auto";
+  }
+
+  if (responseFormat) {
+    body.response_format = responseFormat;
   }
 
   const response = await fetch(`${provider.baseUrl}/chat/completions`, {
@@ -657,6 +662,28 @@ Ahmet'in kullanıcı ID'sini ve kartın ID'sini bulup assign_users aracını ça
 Bir karta birden fazla kişi atanabilir; assigneeIds gönderdiğin liste kartın YENİ
 atanan listesidir (mevcutlara eklemek istiyorsan eskileri de listeye koy).
 
+YETKİNLİK BAZLI OTOMATİK ATAMA (SADECE ADMIN İÇİN):
+Kullanıcı açıkça birini belirtmeden "bir backend görevi oluştur", "bunu frontendciye ata" gibi
+ifadeler kullanırsa, aşağıdaki adımları uygula:
+
+Adım 1 — Analiz: Görev açıklamasından hangi yetkinlik gerektiğini çıkar.
+  - "Backend", "API", "veritabanı", "sunucu", "auth", "endpoint" → Backend
+  - "Frontend", "ön yüz", "React", "UI", "arayüz", "tasarım" → Frontend
+  - "DevOps", "dağıtım", "CI/CD", "docker", "sunucu yönetimi" → DevOps
+  - "test", "kalite", "QA" → Test
+  - "tasarım", "UI/UX", "kullanıcı deneyimi" → UI/UX
+
+Adım 2 — Eşleştirme: Çıkardığın yetkinliğe sahip üyeleri organizasyon listesinden bul.
+  Her üyenin yanında "Yetkinlik: ..." şeklinde rozetleri listelenmiştir.
+
+Adım 3 — İş yükü optimizasyonu: Aynı yetkinlikte birden fazla kişi varsa, To Do ve
+  In Progress sütunlarında daha az kartı olanı seç (kart listesinden kendin hesapla).
+
+Adım 4 — 🟡 Fallback (eşleşme yoksa):
+  Eğer gerekli yetkinliğe sahip hiçbir üye bulamazsan, KESİNLİKLE assign_users ÇAĞIRMA.
+  Görevi oluştur (create_card) ama kimseye atama. Kartın açıklamasına veya yanıtında
+  "Bu görev için [Yetkinlik Adı] rozetine sahip bir üye bulunamadı" yaz.
+
 NOT: Proje ID'si, kolon ID'leri ve kullanıcı ID'leri aşağıda listelenmiştir. Kullanıcıya ID sorma, doğrudan kullan.
 
 GRAFİK OLUŞTURMA YETENEĞİ:
@@ -710,7 +737,7 @@ async function getBoardContext(projectId: string): Promise<string> {
     prisma.organizationMember.findMany({
       where: { organization: { projects: { some: { id: projectId } } } },
       relationLoadStrategy: "join",
-      include: { user: { select: { id: true, name: true, email: true } } },
+      include: { user: { select: { id: true, name: true, email: true, badges: { include: { badge: { select: { id: true, name: true, color: true, icon: true } } } } } } },
     }),
   ]);
 
@@ -722,10 +749,13 @@ async function getBoardContext(projectId: string): Promise<string> {
   parts.push(`Proje ID: ${project.id}`);
   parts.push(`Proje adı: ${project.name}`);
 
-  // Kullanıcılar
+  // Kullanıcılar (yetkinlik rozetleriyle)
   parts.push(
     `Organizasyon üyeleri:\n${members
-      .map((m) => `  - ${m.user.name} (ID: ${m.user.id}, email: ${m.user.email})`)
+      .map((m) => {
+        const badges = m.user.badges?.map((ub) => ub.badge.name).join(", ");
+        return `  - ${m.user.name} (ID: ${m.user.id}, email: ${m.user.email})${badges ? ` — Yetkinlik: ${badges}` : ""}`;
+      })
       .join("\n")}`
   );
 
@@ -938,8 +968,8 @@ ${boardContext}
 Bugünün tarihi: ${today}
 
 Lütfen bu bilgilere dayanarak:
-1. Diğer görevlerin teslim tarihlerini ve yoğunluğunu analiz ederek, bu yeni görev için gerçekçi ve uygun bir son teslim tarihi (dueDate) belirle (KESİNLİKLE YYYY-MM-DD formatında gerçek bir tarih olmalıdır, "YYYY-MM-DD" gibi bir taslak yazma. Eğer tarih belirlenemezse bugünden 3 gün sonrasını yaz).
-2. Üyelerin mevcut iş yüklerini (yani üzerlerindeki aktif kart sayılarını) analiz ederek, bu göreve en müsait olan (en az iş yüküne sahip) en uygun organizasyon üyesini seç ve onun ID'sini (suggestedAssigneeId) yaz (KESİNLİKLE yukarıda listelenen üyelerden birinin ID'si olmalıdır, "müsait_üye_user_id" gibi bir taslak yazma. Eğer üye yoksa null yaz).
+1. Diğer görevlerin teslim tarihlerini ve yoğunluğunu analiz ederek, bu yeni görev için gerçekçi ve uygun bir son teslim tarihi (dueDate) belirle (KESİNLİKLE YYYY-MM-DD formatında gerçek bir tarih olmalıdır. Eğer tarih belirlenemezse bugünden 3 gün sonrasını yaz).
+2. Üyelerin mevcut iş yüklerini (yani üzerlerindeki aktif kart sayılarını) analiz ederek, bu göreve en müsait olan (en az iş yüküne sahip) en uygun organizasyon üyesini seç ve onun ID'sini (suggestedAssigneeId) yaz (KESİNLİKLE yukarıda listelenen üyelerden birinin ID'si olmalıdır. Eğer uygun üye yoksa null yaz).
 
 Görev Başlığı: "${title}"
 
@@ -947,14 +977,14 @@ Yanıtı KESİNLİKLE sadece aşağıdaki JSON formatında ver, XML veya markdow
 
 Format:
 {
-  "description": "görev açıklaması",
-  "priority": "LOW" veya "MEDIUM" veya "HIGH" veya "URGENT",
-  "dueDate": "2026-08-01",
+  "description": "Görev açıklaması buraya yazılacak",
+  "priority": "MEDIUM",
+  "dueDate": "${today}",
   "suggestedAssigneeId": "cms2w9f130001jfzcaxxic03q"
 }`;
 
   const messages = [
-    { role: "system" as const, content: "Sen sadece JSON döndüren bir yardımcı asistansın." },
+    { role: "system" as const, content: "Sen bir JSON API servisisin. Yanıtında KESİNLİKLE açıklama, konuşma, markdown veya backtick kullanma. Sadece geçerli bir JSON objesi döndür." },
     { role: "user" as const, content: prompt }
   ];
 
@@ -979,7 +1009,19 @@ Format:
         .join("")
         .trim();
     } else {
-      const reply = await callOpenAI(provider, messages, undefined, controller.signal);
+      let reply;
+      try {
+        reply = await callOpenAI(
+          provider,
+          messages,
+          undefined,
+          controller.signal,
+          { type: "json_object" }
+        );
+      } catch (err) {
+        console.warn("[AI FILL] response_format failed, falling back without it:", err);
+        reply = await callOpenAI(provider, messages, undefined, controller.signal);
+      }
       rawReply = reply.content.trim();
     }
   } catch (err: any) {

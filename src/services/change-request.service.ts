@@ -207,6 +207,25 @@ async function applyRequest(
         },
         adminId,
       );
+
+      // Attach labels if provided
+      if (payload.labelIds && Array.isArray(payload.labelIds)) {
+        for (const labelId of payload.labelIds) {
+          await prisma.cardLabel.create({
+            data: { cardId: card.id, labelId },
+          }).catch(err => console.warn("Error attaching label to requested card:", err));
+        }
+      }
+
+      // Attach dependencies if provided
+      if (payload.blockerIds && Array.isArray(payload.blockerIds)) {
+        for (const blockerId of payload.blockerIds) {
+          await prisma.cardDependency.create({
+            data: { blockerId, blockedId: card.id },
+          }).catch(err => console.warn("Error attaching dependency to requested card:", err));
+        }
+      }
+
       return { kind: "card" as const, id: card.id, title: card.title };
     }
 

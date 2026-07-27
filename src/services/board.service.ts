@@ -38,7 +38,7 @@ export async function getBoard(projectId: string, userId: string) {
         cards: {
           orderBy: { position: "asc" },
           include: {
-            assignees: { include: { user: { select: { id: true, name: true } } } },
+            assignees: { include: { user: { select: { id: true, name: true, badges: { include: { badge: { select: { id: true, name: true, color: true, icon: true } } } } } } } },
             labels: { include: { label: true } },
           },
         },

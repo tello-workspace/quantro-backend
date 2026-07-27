@@ -100,6 +100,7 @@ model User {
   chatMessages            ChatMessage[]
   changeRequests          ChangeRequest[]          @relation("ChangeRequestRequester")
   reviewedRequests        ChangeRequest[]          @relation("ChangeRequestReviewer")
+  badges                  UserBadge[]
 }
 
 // ---------- ORGANIZATION ----------
@@ -117,6 +118,7 @@ model Organization {
   invitations    OrganizationInvitation[]
   chatMessages   ChatMessage[]
   changeRequests ChangeRequest[]
+  badges         Badge[]
 }
 
 // Uyenin gonderdigi, admin onayi bekleyen degisiklik talebi.
@@ -192,6 +194,37 @@ model OrganizationMember {
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@id([organizationId, userId])
+}
+
+// Yetkinlik / Rozet: Bir uyenin hangi alanlarda uzman oldugunu tanimlar.
+// Orn: Backend, Frontend, DevOps, UI/UX, PLC Expert.
+// Organizasyon bazlidir — her org kendi rozetlerini olusturur.
+model Badge {
+  id             String     @id @default(cuid())
+  organizationId String
+  name           String     // "Backend", "Frontend" vb.
+  color          String     // hex renk: "#3B82F6"
+  icon           String?    // emoji: "⚙️", opsiyonel
+  createdAt      DateTime   @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  users         UserBadge[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+}
+
+// Kullanici <-> Rozet iliskisi (M:N). Bir kullanici birden cok rozete,
+// bir rozet birden cok kullaniciya sahip olabilir.
+model UserBadge {
+  userId     String
+  badgeId    String
+  assignedAt DateTime @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  badge Badge @relation(fields: [badgeId], references: [id], onDelete: Cascade)
+
+  @@id([userId, badgeId])
 }
 
 // ---------- PROJECT ----------

@@ -74,8 +74,17 @@ export async function getOrganizationById(organizationId: string, userId: string
       where: { id: organizationId },
       relationLoadStrategy: "join",
       include: {
+        badges: {
+          include: {
+            users: { include: { user: { select: { id: true, name: true } } } },
+          },
+        },
         members: {
-          include: { user: { select: { id: true, name: true, email: true } } },
+          include: {
+            user: {
+              select: { id: true, name: true, email: true, badges: { include: { badge: true } } },
+            },
+          },
         },
         projects: {
           select: { id: true, name: true, description: true, createdAt: true },

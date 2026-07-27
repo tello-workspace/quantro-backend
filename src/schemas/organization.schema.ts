@@ -24,3 +24,19 @@ export type CreateOrganizationInput = z.infer<typeof createOrganizationSchema>;
 export type UpdateOrganizationInput = z.infer<typeof updateOrganizationSchema>;
 export type AddMemberInput = z.infer<typeof addMemberSchema>;
 export type UpdateMemberRoleInput = z.infer<typeof updateMemberRoleSchema>;
+
+// ─── Badge / Rozet ────────────────────────────────────────────────────
+
+export const createBadgeSchema = z.object({
+  name: z.string().min(1, "Rozet adı zorunlu").max(50),
+  color: z.string().regex(/^#[0-9a-fA-F]{6}$/, "Geçerli bir hex renk girin (örn: #3B82F6)"),
+  icon: z.string().max(50).optional(),
+});
+
+export const assignBadgeSchema = z.object({
+  userId: z.string(),
+  badgeId: z.string(),
+});
+
+export type CreateBadgeInput = z.infer<typeof createBadgeSchema>;
+export type AssignBadgeInput = z.infer<typeof assignBadgeSchema>;
