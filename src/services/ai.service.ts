@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import * as cardService from "@/services/card.service";
 import * as columnService from "@/services/column.service";
 import * as commentService from "@/services/comment.service";
+import { AppError } from "@/utils/errors";
 
 interface ChatMessage {
   role: "system" | "user" | "assistant";
@@ -887,3 +888,78 @@ Kısa ve net Türkçe cevap ver.`;
     clearTimeout(timeout);
   }
 }
+
+export async function generateCardDetails(
+  projectId: string,
+  userId: string,
+  title: string,
+): Promise<{ description: string; priority: string }> {
+  const provider = getProvider();
+
+  if (!provider.apiKey) {
+    throw new AppError(400, "AI asistanı yapılandırılmamış.", "AI_UNCONFIGURED");
+  }
+
+  const prompt = `Sana verilecek olan görev/todo başlığına göre, bu görev için detaylı, profesyonel bir açıklama (description) ve uygun bir öncelik (LOW, MEDIUM, HIGH, URGENT) önerisi üret. 
+Görev Başlığı: "${title}"
+
+Yanıtı KESİNLİKLE sadece aşağıdaki JSON formatında ver, XML veya markdown açıklamaları ekleme. JSON dışında bir şey yazarsan sistem hata verecektir.
+
+Format:
+{
+  "description": "Görev için detaylı, açıklayıcı metin...",
+  "priority": "LOW" | "MEDIUM" | "HIGH" | "URGENT"
+}`;
+
+  const messages = [
+    { role: "system" as const, content: "Sen sadece JSON döndüren bir yardımcı asistansın." },
+    { role: "user" as const, content: prompt }
+  ];
+
+  let rawReply = "";
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+
+  try {
+    if (provider.provider === "google-gemini") {
+      const { contents, systemInstruction } = toGeminiContents(messages);
+      const { parts, error } = await callGeminiRaw(
+        provider,
+        contents,
+        systemInstruction,
+        false,
+        controller.signal,
+      );
+      if (error) throw new Error(error);
+      rawReply = parts
+        .filter((p): p is { text: string } => "text" in p)
+        .map((p) => p.text)
+        .join("")
+        .trim();
+    } else {
+      const reply = await callOpenAI(provider, messages, undefined, controller.signal);
+      rawReply = reply.content.trim();
+    }
+  } catch (err: any) {
+    console.error("[AI FILL] Request error:", err);
+    throw new AppError(500, "AI servisine bağlanırken bir hata oluştu.", "AI_REQUEST_FAILED");
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  const cleaned = rawReply.replace(/```json\s*|```/g, "").trim();
+  try {
+    const parsed = JSON.parse(cleaned);
+    return {
+      description: parsed.description || "",
+      priority: parsed.priority || "MEDIUM",
+    };
+  } catch (err) {
+    console.error("[AI FILL] JSON parse error. Raw reply was:", rawReply);
+    return {
+      description: `Bu görev başlığı için otomatik açıklama: ${title}`,
+      priority: "MEDIUM",
+    };
+  }
+}
+
