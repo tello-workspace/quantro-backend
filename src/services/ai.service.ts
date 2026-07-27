@@ -964,21 +964,71 @@ Format:
     clearTimeout(timeout);
   }
 
-  const cleaned = rawReply.replace(/```json\s*|```/g, "").trim();
-  try {
-    const parsed = JSON.parse(cleaned);
+  let parsed: any = null;
+  const trimmedReply = rawReply.trim();
+  
+  // Try extracting the JSON block between first '{' and last '}'
+  const firstBrace = trimmedReply.indexOf('{');
+  const lastBrace = trimmedReply.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    const jsonCandidate = trimmedReply.substring(firstBrace, lastBrace + 1);
+    try {
+      parsed = JSON.parse(jsonCandidate);
+    } catch (err) {
+      console.error("[AI FILL] JSON parse of extracted block failed:", err);
+    }
+  }
+
+  // Fallback to cleaning backticks if extraction failed
+  if (!parsed) {
+    try {
+      const cleaned = trimmedReply.replace(/```json\s*|```/g, "").trim();
+      parsed = JSON.parse(cleaned);
+    } catch (err) {
+      console.error("[AI FILL] JSON parse error. Raw reply was:", rawReply);
+    }
+  }
+
+  if (parsed) {
+    let priorityVal = "MEDIUM";
+    if (parsed.priority) {
+      const p = parsed.priority.toString().toUpperCase().trim();
+      if (["LOW", "MEDIUM", "HIGH", "URGENT"].includes(p)) {
+        priorityVal = p;
+      }
+    }
+
+    let dueDateVal = parsed.dueDate;
+    if (dueDateVal === "YYYY-MM-DD" || dueDateVal === "null" || dueDateVal === "undefined" || !dueDateVal) {
+      const d = new Date();
+      d.setDate(d.getDate() + 3);
+      dueDateVal = d.toISOString().split('T')[0];
+    } else {
+      dueDateVal = dueDateVal.toString().trim();
+    }
+
+    let suggestedAssigneeVal = parsed.suggestedAssigneeId;
+    if (suggestedAssigneeVal === "null" || suggestedAssigneeVal === "undefined" || suggestedAssigneeVal === "müsait_üye_user_id") {
+      suggestedAssigneeVal = undefined;
+    } else if (suggestedAssigneeVal) {
+      suggestedAssigneeVal = suggestedAssigneeVal.toString().trim();
+    }
+
     return {
-      description: parsed.description || "",
-      priority: parsed.priority || "MEDIUM",
-      dueDate: parsed.dueDate || undefined,
-      suggestedAssigneeId: parsed.suggestedAssigneeId || undefined,
-    };
-  } catch (err) {
-    console.error("[AI FILL] JSON parse error. Raw reply was:", rawReply);
-    return {
-      description: `Bu görev başlığı için otomatik açıklama: ${title}`,
-      priority: "MEDIUM",
+      description: parsed.description || `Bu görev başlığı için otomatik açıklama: ${title}`,
+      priority: priorityVal,
+      dueDate: dueDateVal,
+      suggestedAssigneeId: suggestedAssigneeVal,
     };
   }
+
+  // Final fallback if JSON parsing fails completely
+  const d = new Date();
+  d.setDate(d.getDate() + 3);
+  return {
+    description: `Bu görev başlığı için otomatik açıklama: ${title}`,
+    priority: "MEDIUM",
+    dueDate: d.toISOString().split('T')[0],
+  };
 }
 
