@@ -642,6 +642,23 @@ atanan listesidir (mevcutlara eklemek istiyorsan eskileri de listeye koy).
 
 NOT: Proje ID'si, kolon ID'leri ve kullanıcı ID'leri aşağıda listelenmiştir. Kullanıcıya ID sorma, doğrudan kullan.
 
+GRAFİK OLUŞTURMA YETENEĞİ:
+Kullanıcı senden proje istatistikleri, iş yoğunluğu, tamamlanan işler veya kartların dağılımı ile ilgili görsel bir grafik/graf istediğinde, yanıtında aşağıdaki özel markdown kod bloğunu kullan.
+\`\`\`chart
+{
+  "type": "bar" | "pie" | "line",
+  "title": "Grafik Başlığı",
+  "data": [
+    { "label": "Grup/Kişi/Sütun Adı", "value": sayısal_değer }
+  ]
+}
+\`\`\`
+Örnek durumlar:
+1. Yoğunluk (İş yükü) Grafiği: Her kullanıcıya atanmış kart sayıları.
+2. Sütun Dağılımı Grafiği: Kolonlardaki kart sayıları (To Do, In Progress, Done vb.).
+3. Öncelik Dağılımı Grafiği: Öncelik derecelerine göre kart sayıları (LOW, MEDIUM, HIGH, URGENT).
+Bu formatı birebir koru, kod bloğunun dilini "chart" olarak belirt ve geçerli bir JSON objesi sağla. Yanıtında bu bloğun yanına açıklamalar ekleyebilirsin.
+
 Mevcut proje: "${projectName}"
 
 Proje panosundaki mevcut durum:
