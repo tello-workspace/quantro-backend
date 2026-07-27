@@ -28,7 +28,7 @@ export async function getBoard(projectId: string, userId: string) {
   //
   // relationLoadStrategy: "join" ise ic ice include'lari (assignees -> user,
   // labels -> label) ayri sorgular yerine tek SQL'de topluyor: 6 sorgu -> 1.
-  const [, columns] = await Promise.all([
+  const [access, columns] = await Promise.all([
     checkProjectAccess(projectId, userId),
     prisma.column.findMany({
       where: { projectId },
@@ -78,5 +78,5 @@ export async function getBoard(projectId: string, userId: string) {
     };
   }
 
-  return { columns: boardColumns, tasks };
+  return { columns: boardColumns, tasks, myRole: access.role };
 }
