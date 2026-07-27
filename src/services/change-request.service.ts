@@ -203,6 +203,7 @@ async function applyRequest(
           description: (payload.description as string) ?? undefined,
           priority: payload.priority as never,
           dueDate: (payload.dueDate as string) ?? undefined,
+          assigneeIds: (payload.assigneeIds as string[]) ?? undefined,
         },
         adminId,
       );
@@ -217,6 +218,7 @@ async function applyRequest(
           description: payload.description as string | undefined,
           priority: payload.priority as never,
           dueDate: payload.dueDate as string | undefined,
+          assigneeIds: (payload.assigneeIds as string[]) ?? undefined,
         },
         adminId,
       );
@@ -255,8 +257,23 @@ async function applyRequest(
   }
 }
 
-export async function approveRequest(requestId: string, userId: string, note?: string) {
+export async function approveRequest(requestId: string, userId: string, note?: string, modifiedPayload?: any) {
   const request = await getPendingOrThrow(requestId, userId);
+
+  // If the admin modified the payload, update/merge it first
+  if (modifiedPayload) {
+    const newPayload = {
+      ...((request.payload as any) || {}),
+      ...modifiedPayload,
+    };
+    await prisma.changeRequest.update({
+      where: { id: requestId },
+      data: {
+        payload: newPayload,
+      },
+    });
+    request.payload = newPayload;
+  }
 
   // Once uygula: uygulama patlarsa talep PENDING kalir, admin tekrar dener
   const sonuc = await applyRequest(request, userId);

@@ -1,12 +1,12 @@
 import { z } from "zod";
 
-// Uyenin doldurdugu kart icerigi. Atama bilerek disarida: gorev atamasi
-// admin'e ozel kaliyor ve talep akisina dahil edilmedi.
+// Uyenin doldurdugu kart icerigi.
 const cardPayloadSchema = z.object({
   title: z.string().min(1, "Başlık boş olamaz").max(200, "Başlık çok uzun").optional(),
   description: z.string().max(5000, "Açıklama çok uzun").nullable().optional(),
   priority: z.enum(["LOW", "MEDIUM", "HIGH", "URGENT"]).optional(),
   dueDate: z.string().nullable().optional(),
+  assigneeIds: z.array(z.string()).optional(),
 });
 
 export const createChangeRequestSchema = z.discriminatedUnion("type", [
@@ -51,6 +51,7 @@ export const createChangeRequestSchema = z.discriminatedUnion("type", [
 
 export const reviewChangeRequestSchema = z.object({
   note: z.string().max(500, "Not çok uzun").optional(),
+  payload: z.any().optional(),
 });
 
 export const listChangeRequestsSchema = z.object({

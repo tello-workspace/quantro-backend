@@ -26,7 +26,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     const sonuc =
       action === "approve"
-        ? await changeRequestService.approveRequest(id, user.id, body.note)
+        ? await changeRequestService.approveRequest(id, user.id, body.note, body.payload)
         : await changeRequestService.rejectRequest(id, user.id, body.note);
 
     return successResponse(sonuc);
