@@ -893,15 +893,28 @@ export async function generateCardDetails(
   projectId: string,
   userId: string,
   title: string,
-): Promise<{ description: string; priority: string }> {
+): Promise<{ description: string; priority: string; dueDate?: string; suggestedAssigneeId?: string }> {
   const provider = getProvider();
 
   if (!provider.apiKey) {
     throw new AppError(400, "AI asistanı yapılandırılmamış.", "AI_UNCONFIGURED");
   }
 
-  const prompt = `Sana verilecek olan görev/todo başlığına göre, bu görev için detaylı, profesyonel bir açıklama (description) ve uygun bir öncelik (LOW, MEDIUM, HIGH, URGENT) önerisi üret. 
+  const boardContext = await getBoardContext(projectId);
+  const today = new Date().toISOString().split('T')[0];
+
+  const prompt = `Sana verilecek olan görev/todo başlığına göre, bu görev için detaylı, profesyonel bir açıklama (description) ve uygun bir öncelik (LOW, MEDIUM, HIGH, URGENT) önerisi üret.
 GÖREV BAŞLIĞININ DİLİ HANGİ DİLDEYSE (Türkçe, İngilizce, Almanca vb.), üreteceğin açıklama (description) metni de KESİNLİKLE o dilde olmalıdır.
+
+Ayrıca, sana aşağıda proje panosunun mevcut durumunu (üyeler, mevcut sütunlardaki görevler, teslim tarihleri ve kimin ne kadar iş yükü olduğu) iletiyorum:
+---
+${boardContext}
+---
+Bugünün tarihi: ${today}
+
+Lütfen bu bilgilere dayanarak:
+1. Diğer görevlerin teslim tarihlerini ve yoğunluğunu analiz ederek, bu yeni görev için gerçekçi ve uygun bir son teslim tarihi (dueDate) öner (YYYY-MM-DD formatında).
+2. Üyelerin mevcut iş yüklerini (yani üzerlerindeki aktif kart sayılarını) ve rollerini analiz ederek, bu göreve en müsait olan veya en az iş yüküne sahip olan en uygun organizasyon üyesinin ID'sini (suggestedAssigneeId) öner.
 
 Görev Başlığı: "${title}"
 
@@ -910,7 +923,9 @@ Yanıtı KESİNLİKLE sadece aşağıdaki JSON formatında ver, XML veya markdow
 Format:
 {
   "description": "Görev için detaylı, açıklayıcı metin...",
-  "priority": "LOW" | "MEDIUM" | "HIGH" | "URGENT"
+  "priority": "LOW" | "MEDIUM" | "HIGH" | "URGENT",
+  "dueDate": "YYYY-MM-DD",
+  "suggestedAssigneeId": "müsait_üye_user_id"
 }`;
 
   const messages = [
@@ -955,6 +970,8 @@ Format:
     return {
       description: parsed.description || "",
       priority: parsed.priority || "MEDIUM",
+      dueDate: parsed.dueDate || undefined,
+      suggestedAssigneeId: parsed.suggestedAssigneeId || undefined,
     };
   } catch (err) {
     console.error("[AI FILL] JSON parse error. Raw reply was:", rawReply);
