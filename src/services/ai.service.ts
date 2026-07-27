@@ -304,6 +304,63 @@ async function executeToolByName(
   }
 }
 
+// ─── DSML Parser for DeepSeek Models ────────────────────────────────
+
+function parseDSML(content: string): ToolCall[] | undefined {
+  if (!content.includes("<｜｜DSML｜｜invoke")) {
+    return undefined;
+  }
+
+  const toolCalls: ToolCall[] = [];
+  
+  // Extract all invoke blocks: <｜｜DSML｜｜invoke name="NAME">PARAMS</｜｜DSML｜｜invoke>
+  const invokeRegex = /<｜｜DSML｜｜invoke\s+name="([^"]+)"\s*>([\s\S]*?)<\/｜｜DSML｜｜invoke>/g;
+  let invokeMatch;
+  let index = 0;
+
+  while ((invokeMatch = invokeRegex.exec(content)) !== null) {
+    const functionName = invokeMatch[1];
+    const paramsBlock = invokeMatch[2];
+    
+    // Extract all parameters: <｜｜DSML｜｜parameter name="NAME"[^>]*>VALUE</｜｜DSML｜｜parameter>
+    const paramRegex = /<｜｜DSML｜｜parameter\s+name="([^"]+)"[^>]*>([\s\S]*?)<\/｜｜DSML｜｜parameter>/g;
+    let paramMatch;
+    const args: Record<string, any> = {};
+
+    while ((paramMatch = paramRegex.exec(paramsBlock)) !== null) {
+      const paramName = paramMatch[1];
+      const paramValue = paramMatch[2].trim();
+      
+      let parsedValue: any = paramValue;
+      if (
+        (paramValue.startsWith("[") && paramValue.endsWith("]")) ||
+        (paramValue.startsWith("{") && paramValue.endsWith("}")) ||
+        paramValue === "true" ||
+        paramValue === "false" ||
+        (!isNaN(Number(paramValue)) && paramValue !== "")
+      ) {
+        try {
+          parsedValue = JSON.parse(paramValue);
+        } catch {
+          // Keep as string if JSON parsing fails
+        }
+      }
+      args[paramName] = parsedValue;
+    }
+
+    toolCalls.push({
+      id: `dsml_call_${Date.now()}_${index++}`,
+      type: "function",
+      function: {
+        name: functionName,
+        arguments: JSON.stringify(args),
+      },
+    });
+  }
+
+  return toolCalls.length > 0 ? toolCalls : undefined;
+}
+
 // ─── API Call ───────────────────────────────────────────────────────
 
 async function callOpenAI(
@@ -362,8 +419,20 @@ async function callOpenAI(
   // Reasoning modellerde (UwU) content boş olur, reasoning_content'te yanıt vardır
   // Tool çağrısı varsa reasoning_content'i atla (düşünme metnidir)
   // Tool çağrısı yoksa reasoning_content asıl yanıttır
-  const toolCalls = msg.tool_calls;
-  const content = msg.content || (toolCalls ? "" : (msg.reasoning_content || ""));
+  let toolCalls = msg.tool_calls;
+  let content = msg.content || (toolCalls ? "" : (msg.reasoning_content || ""));
+
+  // Check if content contains DSML tool calls (DeepSeek native format)
+  if (content && content.includes("<｜｜DSML｜｜invoke")) {
+    const dsmlCalls = parseDSML(content);
+    if (dsmlCalls && dsmlCalls.length > 0) {
+      toolCalls = toolCalls ? [...toolCalls, ...dsmlCalls] : dsmlCalls;
+      content = content
+        .replace(/<｜｜DSML｜｜tool_calls>[\s\S]*?<\/｜｜DSML｜｜tool_calls>/g, "")
+        .replace(/<｜｜DSML｜｜invoke[\s\S]*?<\/｜｜DSML｜｜invoke>/g, "")
+        .trim();
+    }
+  }
 
   return { content, tool_calls: toolCalls };
 }

@@ -312,12 +312,31 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
 }
 
 export async function deleteCard(cardId: string, userId: string) {
-  const card = await prisma.card.findUnique({ where: { id: cardId } });
+  const card = await prisma.card.findUnique({ 
+    where: { id: cardId },
+    include: { labels: true }
+  });
   if (!card) throw new NotFoundError("Kart");
 
   const { projectId } = await checkColumnAccess(card.columnId, userId);
 
+  const labelIds = card.labels.map((cl) => cl.labelId);
+
   await prisma.card.delete({ where: { id: cardId } });
+
+  // Clean up orphaned labels
+  if (labelIds.length > 0) {
+    for (const labelId of labelIds) {
+      const usageCount = await prisma.cardLabel.count({
+        where: { labelId },
+      });
+      if (usageCount === 0) {
+        await prisma.label.delete({ where: { id: labelId } }).catch((err) => {
+          console.warn(`[Label Cleanup] Orphaned label silinirken hata: ${labelId}`, err.message);
+        });
+      }
+    }
+  }
 
   broadcastToProject(projectId, SocketEvents.CARD_DELETED, { cardId, projectId });
 }

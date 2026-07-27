@@ -128,4 +128,14 @@ export async function removeLabelFromCard(cardId: string, labelId: string, userI
   await prisma.cardLabel.delete({
     where: { cardId_labelId: { cardId, labelId } },
   });
+
+  // Clean up label if it is no longer used by any card
+  const usageCount = await prisma.cardLabel.count({
+    where: { labelId },
+  });
+  if (usageCount === 0) {
+    await prisma.label.delete({ where: { id: labelId } }).catch((err) => {
+      console.warn(`[Label Cleanup] Orphaned label silinirken hata: ${labelId}`, err.message);
+    });
+  }
 }
