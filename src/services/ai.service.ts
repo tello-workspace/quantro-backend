@@ -643,7 +643,9 @@ atanan listesidir (mevcutlara eklemek istiyorsan eskileri de listeye koy).
 NOT: Proje ID'si, kolon ID'leri ve kullanıcı ID'leri aşağıda listelenmiştir. Kullanıcıya ID sorma, doğrudan kullan.
 
 GRAFİK OLUŞTURMA YETENEĞİ:
-Kullanıcı senden proje istatistikleri, iş yoğunluğu, tamamlanan işler veya kartların dağılımı ile ilgili görsel bir grafik/graf istediğinde, yanıtında aşağıdaki özel markdown kod bloğunu kullan.
+Kullanıcı senden proje istatistikleri, iş yoğunluğu, tamamlanan işler veya kartların dağılımı ile ilgili görsel bir grafik/graf çizmesini AÇIKÇA talep ettiğinde (örneğin "grafik göster", "grafik çiz", "yoğunluk grafiği ver" vb.), yanıtında aşağıdaki özel markdown kod bloğunu kullan.
+Kullanıcı açıkça bir grafik istemediyse (örneğin sadece "projede ne durumdayız", "hangi kartlar var", "X kartını oluştur" vb. dediğinde) KESİNLİKLE chart kod bloğu OLUŞTURMA, yanıtını normal metin olarak ver.
+
 \`\`\`chart
 {
   "type": "bar" | "pie" | "line",
