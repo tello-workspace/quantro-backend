@@ -174,10 +174,23 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
 
   const { role, projectId, columnName: oldColumnName } = await checkColumnAccess(card.columnId, userId);
 
-  // Kimin kime atanacagina sadece ADMIN karar verir; kart tasima (surukleme)
-  // ve diger alanlarin duzenlenmesi tum uyelere acik kalir
+  // Yetki modeli: yapisal degisiklikler ADMIN'e ait. Uye kart TASIYABILIR
+  // (kanban akisi bozulmasin), ama icerik alanlarini ve atamayi dogrudan
+  // degistiremez; bunun icin degisiklik talebi acar (change-request.service).
   if (input.assigneeIds !== undefined && role !== "ADMIN") {
     throw new ForbiddenError("Sadece adminler görev ataması yapabilir");
+  }
+
+  const icerikAlanlariDegisiyor =
+    input.title !== undefined ||
+    input.description !== undefined ||
+    input.priority !== undefined ||
+    input.dueDate !== undefined;
+
+  if (icerikAlanlariDegisiyor && role !== "ADMIN") {
+    throw new ForbiddenError(
+      "Kart içeriğini sadece adminler düzenleyebilir. Değişiklik talebi gönderebilirsiniz.",
+    );
   }
 
   // Kolon değişikliği varsa hedef kolonun da erişilebilir olduğunu kontrol et
@@ -318,7 +331,12 @@ export async function deleteCard(cardId: string, userId: string) {
   });
   if (!card) throw new NotFoundError("Kart");
 
-  const { projectId } = await checkColumnAccess(card.columnId, userId);
+  const { role, projectId } = await checkColumnAccess(card.columnId, userId);
+  if (role !== "ADMIN") {
+    throw new ForbiddenError(
+      "Kartı sadece adminler silebilir. Silme talebi gönderebilirsiniz.",
+    );
+  }
 
   const labelIds = card.labels.map((cl) => cl.labelId);
 

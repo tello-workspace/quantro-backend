@@ -21,6 +21,12 @@ async function checkAdmin(organizationId: string, userId: string) {
 export async function createProject(organizationId: string, input: CreateProjectInput, userId: string) {
   const member = await checkMembership(organizationId, userId);
   if (!member) throw new ForbiddenError("Bu organizasyonda proje oluşturma yetkiniz yok");
+  // Yapisal degisiklik: uye dogrudan yapamaz, talep acar
+  if (member.role !== "ADMIN") {
+    throw new ForbiddenError(
+      "Projeyi sadece adminler oluşturabilir. Proje talebi gönderebilirsiniz.",
+    );
+  }
 
   const project = await prisma.project.create({
     data: {

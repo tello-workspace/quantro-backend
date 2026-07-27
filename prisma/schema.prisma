@@ -2,7 +2,7 @@
 // Kullanım: backend/prisma/schema.prisma olarak kaydet → npx prisma migrate dev --name init
 
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
   // relationJoins: ic ice include'lari ayri sorgular yerine tek SQL'de
   // LATERAL JOIN ile ceker. Uzak DB'de her sorgu ~143ms oldugu icin
   // sorgu sayisini dusurmek en buyuk kazanc.
@@ -40,17 +40,36 @@ enum ActivityType {
 }
 
 enum NotificationType {
-  ASSIGNED          // sana kart atandı
-  BLOCKER_RESOLVED  // seni bloklayan kart bitti
-  DEADLINE_RISK     // deadline riski tespit edildi
-  STALE_CARD        // kartın 7+ gündür hareketsiz
-  WIP_EXCEEDED      // sütun WIP limitini aştı
-  ORG_INVITE        // organizasyon daveti (beklemede)
-  ORG_JOINED        // organizasyona eklendin
-  ORG_REMOVED       // organizasyondan çıkarıldın
-  PROJECT_CREATED   // yeni proje oluşturuldu
-  PROJECT_DELETED   // bir proje silindi
-  ROLE_CHANGED      // rolün değiştirildi
+  ASSIGNED // sana kart atandı
+  BLOCKER_RESOLVED // seni bloklayan kart bitti
+  DEADLINE_RISK // deadline riski tespit edildi
+  STALE_CARD // kartın 7+ gündür hareketsiz
+  WIP_EXCEEDED // sütun WIP limitini aştı
+  ORG_INVITE // organizasyon daveti (beklemede)
+  ORG_JOINED // organizasyona eklendin
+  ORG_REMOVED // organizasyondan çıkarıldın
+  PROJECT_CREATED // yeni proje oluşturuldu
+  PROJECT_DELETED // bir proje silindi
+  ROLE_CHANGED // rolün değiştirildi
+  REQUEST_CREATED // uye yeni bir degisiklik talebi gonderdi (adminlere)
+  REQUEST_APPROVED // talebin onaylandi
+  REQUEST_REJECTED // talebin reddedildi
+}
+
+// Uyeler yapisal degisiklikleri dogrudan yapmaz; talep olustururlar.
+// Admin onaylayinca talep otomatik uygulanir, reddedilince veri atilir.
+enum ChangeRequestType {
+  CARD_CREATE
+  CARD_UPDATE
+  CARD_DELETE
+  COLUMN_CREATE
+  PROJECT_CREATE
+}
+
+enum ChangeRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }
 
 enum InvitationStatus {
@@ -68,17 +87,19 @@ model User {
   passwordHash String
   createdAt    DateTime @default(now())
 
-  ownedOrganizations   Organization[]       @relation("OrganizationOwner")
+  ownedOrganizations      Organization[]           @relation("OrganizationOwner")
   organizationMemberships OrganizationMember[]
-  ownedProjects        Project[]            @relation("ProjectOwner")
-  createdCards         Card[]               @relation("CardCreator")
-  assignedCards        CardAssignee[]
-  comments             Comment[]
-  activities           Activity[]
-  notifications        Notification[]
-  sentInvitations      OrganizationInvitation[] @relation("InvitationSender")
-  receivedInvitations  OrganizationInvitation[] @relation("InvitationReceiver")
-  chatMessages         ChatMessage[]
+  ownedProjects           Project[]                @relation("ProjectOwner")
+  createdCards            Card[]                   @relation("CardCreator")
+  assignedCards           CardAssignee[]
+  comments                Comment[]
+  activities              Activity[]
+  notifications           Notification[]
+  sentInvitations         OrganizationInvitation[] @relation("InvitationSender")
+  receivedInvitations     OrganizationInvitation[] @relation("InvitationReceiver")
+  chatMessages            ChatMessage[]
+  changeRequests          ChangeRequest[]          @relation("ChangeRequestRequester")
+  reviewedRequests        ChangeRequest[]          @relation("ChangeRequestReviewer")
 }
 
 // ---------- ORGANIZATION ----------
@@ -90,11 +111,40 @@ model Organization {
   ownerId     String
   createdAt   DateTime @default(now())
 
-  owner        User                @relation("OrganizationOwner", fields: [ownerId], references: [id])
-  members      OrganizationMember[]
-  projects     Project[]
-  invitations  OrganizationInvitation[]
-  chatMessages ChatMessage[]
+  owner          User                     @relation("OrganizationOwner", fields: [ownerId], references: [id])
+  members        OrganizationMember[]
+  projects       Project[]
+  invitations    OrganizationInvitation[]
+  chatMessages   ChatMessage[]
+  changeRequests ChangeRequest[]
+}
+
+// Uyenin gonderdigi, admin onayi bekleyen degisiklik talebi.
+// payload istenen veriyi tutar (kart basligi/aciklamasi vb.); onaylaninca
+// ilgili servis cagrilarak uygulanir, reddedilince payload kullanilmaz.
+model ChangeRequest {
+  id             String              @id @default(cuid())
+  organizationId String
+  projectId      String? // PROJECT_CREATE talebinde henuz proje yok
+  type           ChangeRequestType
+  status         ChangeRequestStatus @default(PENDING)
+  payload        Json // istenen alanlar
+  targetCardId   String? // CARD_UPDATE / CARD_DELETE hedefi
+  targetColumnId String? // CARD_CREATE'in ekleneceigi kolon
+  requestedById  String
+  reviewedById   String?
+  reviewNote     String? // admin reddederken kisa gerekce
+  createdAt      DateTime            @default(now())
+  reviewedAt     DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project      Project?     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  requestedBy  User         @relation("ChangeRequestRequester", fields: [requestedById], references: [id], onDelete: Cascade)
+  reviewedBy   User?        @relation("ChangeRequestReviewer", fields: [reviewedById], references: [id])
+  targetCard   Card?        @relation(fields: [targetCardId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, status])
+  @@index([requestedById, status])
 }
 
 // Organizasyon basina tek sohbet odasi: uyeler ayni akista mesajlasir.
@@ -154,19 +204,20 @@ model Project {
   ownerId        String
   createdAt      DateTime @default(now())
 
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  owner        User         @relation("ProjectOwner", fields: [ownerId], references: [id])
-  columns      Column[]
-  labels       Label[]
-  activities   Activity[]
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  owner          User            @relation("ProjectOwner", fields: [ownerId], references: [id])
+  columns        Column[]
+  labels         Label[]
+  activities     Activity[]
+  changeRequests ChangeRequest[]
 }
 
 model Column {
   id        String  @id @default(cuid())
   projectId String
   name      String
-  position  Float   // fractional indexing: araya ekleme = (önceki+sonraki)/2
-  wipLimit  Int?    // Darboğaz uyarısı: aktif kart sayısı bunu aşarsa UI uyarır
+  position  Float // fractional indexing: araya ekleme = (önceki+sonraki)/2
+  wipLimit  Int? // Darboğaz uyarısı: aktif kart sayısı bunu aşarsa UI uyarır
   isDone    Boolean @default(false) // "Done" sütunu işareti → stale taraması bunu atlar
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
@@ -188,16 +239,17 @@ model Card {
   // karta dokunan her işlem (taşıma, yorum, düzenleme, atama) bunu now() yapar.
   // Gece cron'u: lastActivityAt < now-7gün && column.isDone == false → stale
 
-  column   Column @relation(fields: [columnId], references: [id], onDelete: Cascade)
-  creator  User   @relation("CardCreator", fields: [creatorId], references: [id])
+  column  Column @relation(fields: [columnId], references: [id], onDelete: Cascade)
+  creator User   @relation("CardCreator", fields: [creatorId], references: [id])
 
-  comments      Comment[]
-  labels        CardLabel[]
-  assignees     CardAssignee[]
-  blocking      CardDependency[] @relation("Blocker") // bu kartın blokladıkları
-  blockedBy     CardDependency[] @relation("Blocked") // bu kartı bloklayanlar
-  activities    Activity[]
-  notifications Notification[]
+  comments       Comment[]
+  labels         CardLabel[]
+  assignees      CardAssignee[]
+  blocking       CardDependency[] @relation("Blocker") // bu kartın blokladıkları
+  blockedBy      CardDependency[] @relation("Blocked") // bu kartı bloklayanlar
+  activities     Activity[]
+  notifications  Notification[]
+  changeRequests ChangeRequest[]
 
   @@index([columnId])
   @@index([lastActivityAt]) // cron taraması hızlı olsun
@@ -265,7 +317,7 @@ model Activity {
   cardId    String?
   userId    String
   type      ActivityType
-  data      Json?        // esnek detay, örn: { "from": "To Do", "to": "In Progress" }
+  data      Json? // esnek detay, örn: { "from": "To Do", "to": "In Progress" }
   createdAt DateTime     @default(now())
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)

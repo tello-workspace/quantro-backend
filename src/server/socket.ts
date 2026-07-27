@@ -52,6 +52,10 @@ export interface ServerSocketEvents {
   [SocketEvents.CHAT_MESSAGE_NEW]: (message: ChatMessagePayload) => void;
   [SocketEvents.CHAT_TYPING]: (data: ChatTypingPayload) => void;
 
+  // Degisiklik talepleri
+  [SocketEvents.REQUEST_CREATED]: (request: unknown) => void;
+  [SocketEvents.REQUEST_REVIEWED]: (request: unknown) => void;
+
   // Bağımlılık events
   [SocketEvents.DEPENDENCY_ADDED]: (data: DependencyPayload) => void;
   [SocketEvents.DEPENDENCY_REMOVED]: (data: DependencyPayload) => void;
@@ -112,6 +116,10 @@ export enum SocketEvents {
   // Organizasyon sohbeti
   CHAT_MESSAGE_NEW = "chat:message",
   CHAT_TYPING = "chat:typing",
+
+  // Degisiklik talepleri (uye -> admin onayi)
+  REQUEST_CREATED = "request:created",
+  REQUEST_REVIEWED = "request:reviewed",
 
   // Bağımlılık
   DEPENDENCY_ADDED = "dependency:added",

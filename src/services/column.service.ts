@@ -25,7 +25,13 @@ async function checkProjectAccess(projectId: string, userId: string) {
 }
 
 export async function createColumn(projectId: string, input: CreateColumnInput, userId: string) {
-  await checkProjectAccess(projectId, userId);
+  const { role } = await checkProjectAccess(projectId, userId);
+  // Yapisal degisiklik: uye dogrudan yapamaz, talep acar
+  if (role !== "ADMIN") {
+    throw new ForbiddenError(
+      "Sütunu sadece adminler oluşturabilir. Sütun talebi gönderebilirsiniz.",
+    );
+  }
 
   // Pozisyon verilmemişse sona ekle
   let position = input.position;
