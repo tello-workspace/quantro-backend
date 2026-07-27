@@ -935,7 +935,7 @@ Format:
 
   let rawReply = "";
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
+  const timeout = setTimeout(() => controller.abort(), 35000);
 
   try {
     if (provider.provider === "google-gemini") {
