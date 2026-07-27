@@ -285,14 +285,30 @@ async function executeToolByName(
       }
 
       case "list_columns": {
-        const columns = await columnService.getColumns(projectId, userId);
+        const columns = await prisma.column.findMany({
+          where: { projectId },
+          orderBy: { position: "asc" },
+          include: {
+            cards: {
+              include: {
+                assignees: { include: { user: { select: { id: true, name: true } } } },
+              }
+            }
+          }
+        });
         if (columns.length === 0) return "Bu projede henüz kolon yok.";
 
-        const lines = columns.map(
-          (c) =>
-            `• "${c.name}" (${c._count?.cards ?? 0} kart) [ID: ${c.id}]`,
-        );
-        return `📋 Proje kolonları:\n${lines.join("\n")}`;
+        const lines = columns.map((c) => {
+          let cardDetails = "";
+          if (c.cards.length > 0) {
+            cardDetails = "\n" + c.cards.map(card => {
+              const assigneesStr = card.assignees.map(a => a.user.name).join(", ");
+              return `    - "${card.title}" (ID: ${card.id})${assigneesStr ? ` [Atanan: ${assigneesStr}]` : ""}`;
+            }).join("\n");
+          }
+          return `• "${c.name}" (ID: ${c.id}) — ${c.cards.length} kart${cardDetails}`;
+        });
+        return `📋 Proje kolonları ve kart detayları:\n${lines.join("\n\n")}`;
       }
 
       default:
@@ -791,30 +807,39 @@ export async function sendMessage(
     }
 
     // OpenAI-compatible (UwU dahil) — function calling ile çalışır
-    // İlk tur: AI'ya mesaj + tools gönder, tool_calls bekle
-    const first = await callOpenAI(provider, apiMessages, TOOLS, controller.signal);
+    // OpenAI-compatible (UwU dahil) — function calling ile çalışır
+    // Çok turlu tool döngüsü (Gemini ile paralel mantıkta)
+    const chatMessages: (ChatMessage | ToolMessage)[] = [...apiMessages];
+    const MAX_ROUNDS = 4;
 
-    // Tool çağrısı yoksa direkt cevabı döndür
-    if (!first.tool_calls?.length) {
-      return first.content || "⚠️ AI asistanı boş cevap döndü.";
+    for (let round = 0; round < MAX_ROUNDS; round++) {
+      // Son turda tool göndermeyerek modeli düz metin cevap vermeye zorluyoruz
+      const activeTools = round < MAX_ROUNDS - 1 ? TOOLS : undefined;
+      const reply = await callOpenAI(provider, chatMessages, activeTools, controller.signal);
+
+      if (!reply.tool_calls?.length) {
+        return reply.content || "✅ İşlem tamamlandı.";
+      }
+
+      // Modelin tool çağrısını geçmişe ekle
+      chatMessages.push({
+        role: "assistant" as const,
+        content: reply.content || null,
+        tool_calls: reply.tool_calls,
+      });
+
+      // Tool çağrılarını çalıştırıp geçmişe ekle
+      for (const tc of reply.tool_calls) {
+        const result = await executeTool(tc, userId, projectId);
+        chatMessages.push({
+          role: "tool" as const,
+          tool_call_id: tc.id,
+          content: result,
+        });
+      }
     }
 
-    // Tool çağrılarını çalıştır
-    const toolResults: ToolMessage[] = [];
-    for (const tc of first.tool_calls) {
-      const result = await executeTool(tc, userId, projectId);
-      toolResults.push({ role: "tool", tool_call_id: tc.id, content: result });
-    }
-
-    // İkinci tur: tool sonuçlarını AI'ya gönder, doğal dil cevabı al
-    const secondMessages = [
-      ...apiMessages,
-      { role: "assistant" as const, content: first.content || null, tool_calls: first.tool_calls },
-      ...toolResults,
-    ];
-
-    const second = await callOpenAI(provider, secondMessages, undefined, controller.signal);
-    return second.content || "✅ İşlem tamamlandı.";
+    return "⚠️ İşlem çok fazla adım sürdü, tamamlanamadı. Lütfen isteğinizi sadeleştirin.";
 
   } catch (error: unknown) {
     if (error instanceof DOMException && error.name === "AbortError") {
