@@ -114,6 +114,7 @@ model User {
   changeRequests          ChangeRequest[]          @relation("ChangeRequestRequester")
   reviewedRequests        ChangeRequest[]          @relation("ChangeRequestReviewer")
   badges                  UserBadge[]
+  uploadedAttachments     CardAttachment[]
 }
 
 // ---------- ORGANIZATION ----------
@@ -296,6 +297,7 @@ model Card {
   activities     Activity[]
   notifications  Notification[]
   changeRequests ChangeRequest[]
+  attachments    CardAttachment[]
 
   @@index([columnId])
   @@index([lastActivityAt]) // cron taraması hızlı olsun
@@ -341,6 +343,26 @@ model CardLabel {
   label Label @relation(fields: [labelId], references: [id], onDelete: Cascade)
 
   @@id([cardId, labelId])
+}
+
+// Karta eklenen dosya/gorsel. Gercek bayt Supabase Storage'daki private
+// "card-attachments" bucket'inda durur (storagePath); bu satir sadece
+// metadata tutar. Indirme linki her istekte kisa omurlu (1 saat) imzali
+// URL olarak uretilir, storagePath asla dogrudan disari verilmez.
+model CardAttachment {
+  id          String   @id @default(cuid())
+  cardId      String
+  uploaderId  String
+  fileName    String
+  storagePath String
+  fileSize    Int
+  mimeType    String
+  createdAt   DateTime @default(now())
+
+  card     Card @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  uploader User @relation(fields: [uploaderId], references: [id])
+
+  @@index([cardId])
 }
 
 // Self-referential N:N — "blocked by" ilişkisi

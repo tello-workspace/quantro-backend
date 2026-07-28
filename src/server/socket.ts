@@ -48,6 +48,9 @@ export interface ServerSocketEvents {
   [SocketEvents.COMMENT_UPDATED]: (comment: CommentPayload) => void;
   [SocketEvents.COMMENT_DELETED]: (commentId: string) => void;
 
+  [SocketEvents.ATTACHMENT_ADDED]: (attachment: AttachmentPayload) => void;
+  [SocketEvents.ATTACHMENT_DELETED]: (data: { cardId: string; attachmentId: string }) => void;
+
   // Organizasyon sohbeti
   [SocketEvents.CHAT_MESSAGE_NEW]: (message: ChatMessagePayload) => void;
   [SocketEvents.CHAT_TYPING]: (data: ChatTypingPayload) => void;
@@ -112,6 +115,10 @@ export enum SocketEvents {
   COMMENT_ADDED = "comment:added",
   COMMENT_UPDATED = "comment:updated",
   COMMENT_DELETED = "comment:deleted",
+
+  // Kart eki (dosya/gorsel)
+  ATTACHMENT_ADDED = "attachment:added",
+  ATTACHMENT_DELETED = "attachment:deleted",
 
   // Organizasyon sohbeti
   CHAT_MESSAGE_NEW = "chat:message",
@@ -215,6 +222,17 @@ export interface CommentPayload {
   authorId: string;
   authorName: string;
   text: string;
+  createdAt: string;
+}
+
+export interface AttachmentPayload {
+  id: string;
+  cardId: string;
+  uploaderId: string;
+  uploaderName: string;
+  fileName: string;
+  fileSize: number;
+  mimeType: string;
   createdAt: string;
 }
 
