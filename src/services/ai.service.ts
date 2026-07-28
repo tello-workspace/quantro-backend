@@ -1357,10 +1357,5 @@ Format:
       });
     }
 
-    return { movedCards };
-  } catch (parseErr) {
-    console.error("[AI PUSH ANALYZER] JSON parse hatası:", parseErr, "Raw response:", responseText);
-    return { movedCards: [] };
-  }
+  return { movedCards };
 }
-

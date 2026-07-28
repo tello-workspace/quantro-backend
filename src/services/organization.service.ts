@@ -219,14 +219,6 @@ export async function acceptInvitation(invitationId: string, userId: string) {
     role: member.role,
   });
 
-  // Emit real-time event
-  broadcastToOrganization(organizationId, SocketEvents.ORG_MEMBER_ADDED, {
-    organizationId,
-    userId: user.id,
-    userName: user.name,
-    role: input.role ?? "MEMBER",
-    message: `"${org?.name ?? "Organizasyon"}" organizasyonuna katıldı`,
-  });
 
   return member;
 }
@@ -285,7 +277,10 @@ export async function removeMember(organizationId: string, memberUserId: string,
   const org = await prisma.organization.findUnique({ where: { id: organizationId } });
   if (org?.ownerId === memberUserId) throw new ForbiddenError("Kurucu organizasyondan çıkarılamaz");
 
-  const member = await checkMembership(organizationId, memberUserId);
+  const member = await prisma.organizationMember.findUnique({
+    where: { organizationId_userId: { organizationId, userId: memberUserId } },
+    include: { user: { select: { name: true } } },
+  });
   if (!member) throw new NotFoundError("Üye");
 
   // Bildirimi silme işlemi öncesinde gönder
@@ -307,11 +302,6 @@ export async function removeMember(organizationId: string, memberUserId: string,
     where: { organizationId_userId: { organizationId, userId: memberUserId } },
   });
 
-  broadcastToOrganization(organizationId, SocketEvents.ORG_MEMBER_REMOVED, {
-    organizationId,
-    userId: memberUserId,
-    userName: member.user.name,
-  });
 }
 
 export async function updateMemberRole(organizationId: string, input: UpdateMemberRoleInput, userId: string) {
