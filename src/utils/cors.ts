@@ -8,6 +8,12 @@ function getAllowedOrigins(): string[] {
 }
 
 export function resolveAllowedOrigin(requestOrigin: string | null): string {
+  // FRONTEND_URL tanimliysa o listedekilere izin ver
+  // Tanimli DEGILSE (Vercel'de env eklenmemis) tum originleri kabul et
+  if (!process.env.FRONTEND_URL) {
+    return requestOrigin ?? DEFAULT_DEV_ORIGINS[0];
+  }
+
   const allowed = getAllowedOrigins();
   if (requestOrigin && allowed.includes(requestOrigin)) {
     return requestOrigin;
