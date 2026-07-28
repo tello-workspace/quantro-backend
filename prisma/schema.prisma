@@ -87,6 +87,17 @@ model User {
   passwordHash String
   createdAt    DateTime @default(now())
 
+  // Profil bilgileri: kullanici kendi doldurur. AI, gorev atarken (chat'teki
+  // otomatik atama ve "AI ile Doldur") bu alanlari Badge'lerle birlikte
+  // kullanarak icerige en uyumlu kisiyi onerir.
+  title           String?
+  bio             String?
+  experience      String? // serbest metin: "2 yıl 3 ay", "6 ay", "Yeni başladım" vb.
+  githubUrl       String?
+  linkedinUrl     String?
+  expertiseAreas  String[] @default([])
+  languages       String[] @default([])
+
   ownedOrganizations      Organization[]           @relation("OrganizationOwner")
   organizationMemberships OrganizationMember[]
   ownedProjects           Project[]                @relation("ProjectOwner")
