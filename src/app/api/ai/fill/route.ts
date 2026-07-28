@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import * as aiService from "@/services/ai.service";
-import { successResponse, errorResponse } from "@/utils/api-response";
+import { successResponse, errorResponse, handleApiError } from "@/utils/api-response";
 import { authenticate, AuthenticatedRequest } from "@/middleware/auth";
 import { checkAiRateLimit } from "@/middleware/rateLimit";
 import { AppError } from "@/utils/errors";
@@ -43,7 +43,6 @@ export async function POST(request: NextRequest) {
     if (error instanceof AppError) {
       return errorResponse(error.message, error.statusCode, error.code);
     }
-    console.error("[AI FILL] Hata:", error);
-    return errorResponse("AI detayları üretilemedi", 500, "INTERNAL_ERROR");
+    return handleApiError(request, error, "AI detayları üretilemedi");
   }
 }

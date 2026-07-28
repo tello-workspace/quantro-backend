@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { addMemberSchema, updateMemberRoleSchema } from "@/schemas/organization.schema";
 import * as organizationService from "@/services/organization.service";
-import { successResponse, errorResponse } from "@/utils/api-response";
+import { successResponse, errorResponse, handleApiError } from "@/utils/api-response";
 import { validateBody } from "@/middleware/validate";
 import { authenticate, AuthenticatedRequest } from "@/middleware/auth";
 import { AppError } from "@/utils/errors";
@@ -22,7 +22,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (error instanceof AppError) {
       return errorResponse(error.message, error.statusCode, error.code);
     }
-    return errorResponse("Davet gönderilemedi", 500, "INTERNAL_ERROR");
+    return handleApiError(request, error, "Davet gönderilemedi");
   }
 }
 
@@ -47,7 +47,7 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
     if (error instanceof AppError) {
       return errorResponse(error.message, error.statusCode, error.code);
     }
-    return errorResponse("Üye çıkarılamadı", 500, "INTERNAL_ERROR");
+    return handleApiError(request, error, "Üye çıkarılamadı");
   }
 }
 
@@ -67,6 +67,6 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     if (error instanceof AppError) {
       return errorResponse(error.message, error.statusCode, error.code);
     }
-    return errorResponse("Rol güncellenemedi", 500, "INTERNAL_ERROR");
+    return handleApiError(request, error, "Rol güncellenemedi");
   }
 }

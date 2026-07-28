@@ -4,7 +4,7 @@ import {
   listChangeRequestsSchema,
 } from "@/schemas/change-request.schema";
 import * as changeRequestService from "@/services/change-request.service";
-import { successResponse, errorResponse, validationError } from "@/utils/api-response";
+import { successResponse, errorResponse, handleApiError, validationError } from "@/utils/api-response";
 import { validateBody } from "@/middleware/validate";
 import { authenticate, AuthenticatedRequest } from "@/middleware/auth";
 import { AppError } from "@/utils/errors";
@@ -32,7 +32,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     if (error instanceof AppError) {
       return errorResponse(error.message, error.statusCode, error.code);
     }
-    return errorResponse("Talepler alınamadı", 500, "INTERNAL_ERROR");
+    return handleApiError(request, error, "Talepler alınamadı");
   }
 }
 
@@ -54,7 +54,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (error instanceof AppError) {
       return errorResponse(error.message, error.statusCode, error.code);
     }
-    console.error("[REQUESTS] Hata:", error);
-    return errorResponse("Talep oluşturulamadı", 500, "INTERNAL_ERROR");
+    return handleApiError(request, error, "Talep oluşturulamadı");
   }
 }

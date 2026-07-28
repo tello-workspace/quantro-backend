@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { registerSchema } from "@/schemas/auth.schema";
 import * as authService from "@/services/auth.service";
-import { successResponse, errorResponse } from "@/utils/api-response";
+import { successResponse, errorResponse, handleApiError } from "@/utils/api-response";
 import { validateBody } from "@/middleware/validate";
 import { checkRateLimit } from "@/middleware/rateLimit";
 import { checkIdempotency, clearIdempotency, failIdempotency } from "@/middleware/idempotency";
@@ -28,10 +28,9 @@ export async function POST(request: NextRequest) {
       throw err;
     }
   } catch (error) {
-    console.error("REGISTER ERROR:", error);
     if (error instanceof AppError) {
       return errorResponse(error.message, error.statusCode, error.code);
     }
-    return errorResponse(error instanceof Error ? error.message : String(error), 500, "INTERNAL_ERROR");
+    return handleApiError(request, error, "Kayıt oluşturulamadı");
   }
 }

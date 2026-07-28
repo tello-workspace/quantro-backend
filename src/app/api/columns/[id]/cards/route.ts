@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { createCardSchema } from "@/schemas/card.schema";
 import * as cardService from "@/services/card.service";
-import { successResponse, errorResponse } from "@/utils/api-response";
+import { successResponse, errorResponse, handleApiError } from "@/utils/api-response";
 import { validateBody } from "@/middleware/validate";
 import { authenticate, AuthenticatedRequest } from "@/middleware/auth";
 import { AppError } from "@/utils/errors";
@@ -19,7 +19,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     if (error instanceof AppError) {
       return errorResponse(error.message, error.statusCode, error.code);
     }
-    return errorResponse("Kartlar alınamadı", 500, "INTERNAL_ERROR");
+    return handleApiError(request, error, "Kartlar alınamadı");
   }
 }
 
@@ -39,6 +39,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (error instanceof AppError) {
       return errorResponse(error.message, error.statusCode, error.code);
     }
-    return errorResponse("Kart oluşturulamadı", 500, "INTERNAL_ERROR");
+    return handleApiError(request, error, "Kart oluşturulamadı");
   }
 }

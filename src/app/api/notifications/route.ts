@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import * as notificationService from "@/services/notification.service";
-import { successResponse, errorResponse } from "@/utils/api-response";
+import { successResponse, errorResponse, handleApiError } from "@/utils/api-response";
 import { authenticate, AuthenticatedRequest } from "@/middleware/auth";
 import { AppError } from "@/utils/errors";
 import { getNotificationsQuerySchema } from "@/schemas/notification.schema";
@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
     if (error instanceof AppError) {
       return errorResponse(error.message, error.statusCode, error.code);
     }
-    return errorResponse("Bildirimler alınamadı", 500, "INTERNAL_ERROR");
+    return handleApiError(request, error, "Bildirimler alınamadı");
   }
 }
 

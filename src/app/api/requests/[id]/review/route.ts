@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { reviewChangeRequestSchema } from "@/schemas/change-request.schema";
 import * as changeRequestService from "@/services/change-request.service";
-import { successResponse, errorResponse } from "@/utils/api-response";
+import { successResponse, errorResponse, handleApiError } from "@/utils/api-response";
 import { validateBody } from "@/middleware/validate";
 import { authenticate, AuthenticatedRequest } from "@/middleware/auth";
 import { AppError } from "@/utils/errors";
@@ -34,7 +34,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (error instanceof AppError) {
       return errorResponse(error.message, error.statusCode, error.code);
     }
-    console.error("[REQUEST REVIEW] Hata:", error);
-    return errorResponse("Talep değerlendirilemedi", 500, "INTERNAL_ERROR");
+    return handleApiError(request, error, "Talep değerlendirilemedi");
   }
 }

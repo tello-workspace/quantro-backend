@@ -354,6 +354,22 @@ model CardDependency {
   @@id([blockerId, blockedId])
 }
 
+// Beklenmeyen (AppError olmayan) hatalar buraya düşer. Route handler'lar
+// handleApiError() üzerinden buraya yazar; validasyon/yetki gibi beklenen
+// hatalar (400/401/403/404) burada YOK — sadece gerçek 500'ler loglanır.
+model ErrorLog {
+  id         String   @id @default(cuid())
+  message    String
+  stack      String?
+  method     String
+  path       String
+  statusCode Int      @default(500)
+  userId     String?
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+}
+
 // Her önemli olay buraya loglanır → haftalık özet + aktivite akışı buradan üretilir
 model Activity {
   id        String       @id @default(cuid())

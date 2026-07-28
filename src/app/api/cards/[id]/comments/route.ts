@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { createCommentSchema } from "@/schemas/comment.schema";
 import * as commentService from "@/services/comment.service";
-import { successResponse, errorResponse } from "@/utils/api-response";
+import { successResponse, errorResponse, handleApiError } from "@/utils/api-response";
 import { validateBody } from "@/middleware/validate";
 import { authenticate, AuthenticatedRequest } from "@/middleware/auth";
 import { checkIdempotency, clearIdempotency, failIdempotency } from "@/middleware/idempotency";
@@ -20,7 +20,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     if (error instanceof AppError) {
       return errorResponse(error.message, error.statusCode, error.code);
     }
-    return errorResponse("Yorumlar alınamadı", 500, "INTERNAL_ERROR");
+    return handleApiError(request, error, "Yorumlar alınamadı");
   }
 }
 
@@ -50,6 +50,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (error instanceof AppError) {
       return errorResponse(error.message, error.statusCode, error.code);
     }
-    return errorResponse("Yorum eklenemedi", 500, "INTERNAL_ERROR");
+    return handleApiError(request, error, "Yorum eklenemedi");
   }
 }

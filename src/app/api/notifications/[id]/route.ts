@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import * as notificationService from "@/services/notification.service";
-import { successResponse, errorResponse } from "@/utils/api-response";
+import { successResponse, errorResponse, handleApiError } from "@/utils/api-response";
 import { authenticate, AuthenticatedRequest } from "@/middleware/auth";
 import { AppError } from "@/utils/errors";
 
@@ -17,6 +17,6 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     if (error instanceof AppError) {
       return errorResponse(error.message, error.statusCode, error.code);
     }
-    return errorResponse("Bildirim okunamadı", 500, "INTERNAL_ERROR");
+    return handleApiError(request, error, "Bildirim okunamadı");
   }
 }

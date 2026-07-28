@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { updateColumnSchema } from "@/schemas/column.schema";
 import * as columnService from "@/services/column.service";
-import { successResponse, errorResponse } from "@/utils/api-response";
+import { successResponse, errorResponse, handleApiError } from "@/utils/api-response";
 import { validateBody } from "@/middleware/validate";
 import { authenticate, AuthenticatedRequest } from "@/middleware/auth";
 import { AppError } from "@/utils/errors";
@@ -19,7 +19,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     if (error instanceof AppError) {
       return errorResponse(error.message, error.statusCode, error.code);
     }
-    return errorResponse("Sütun alınamadı", 500, "INTERNAL_ERROR");
+    return handleApiError(request, error, "Sütun alınamadı");
   }
 }
 
@@ -39,7 +39,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     if (error instanceof AppError) {
       return errorResponse(error.message, error.statusCode, error.code);
     }
-    return errorResponse("Sütun güncellenemedi", 500, "INTERNAL_ERROR");
+    return handleApiError(request, error, "Sütun güncellenemedi");
   }
 }
 
@@ -56,6 +56,6 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
     if (error instanceof AppError) {
       return errorResponse(error.message, error.statusCode, error.code);
     }
-    return errorResponse("Sütun silinemedi", 500, "INTERNAL_ERROR");
+    return handleApiError(request, error, "Sütun silinemedi");
   }
 }

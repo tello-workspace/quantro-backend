@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { createChatMessageSchema, listChatMessagesSchema } from "@/schemas/chat.schema";
 import * as chatService from "@/services/chat.service";
-import { successResponse, errorResponse, validationError } from "@/utils/api-response";
+import { successResponse, errorResponse, handleApiError, validationError } from "@/utils/api-response";
 import { validateBody } from "@/middleware/validate";
 import { authenticate, AuthenticatedRequest } from "@/middleware/auth";
 import { AppError } from "@/utils/errors";
@@ -27,7 +27,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     if (error instanceof AppError) {
       return errorResponse(error.message, error.statusCode, error.code);
     }
-    return errorResponse("Mesajlar alınamadı", 500, "INTERNAL_ERROR");
+    return handleApiError(request, error, "Mesajlar alınamadı");
   }
 }
 
@@ -51,6 +51,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (error instanceof AppError) {
       return errorResponse(error.message, error.statusCode, error.code);
     }
-    return errorResponse("Mesaj gönderilemedi", 500, "INTERNAL_ERROR");
+    return handleApiError(request, error, "Mesaj gönderilemedi");
   }
 }

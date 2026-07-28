@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { runNightlyScan } from "@/services/scan.service";
-import { successResponse, errorResponse } from "@/utils/api-response";
+import { successResponse, errorResponse, handleApiError } from "@/utils/api-response";
 import { authenticate } from "@/middleware/auth";
 import { AppError } from "@/utils/errors";
 
@@ -16,6 +16,6 @@ export async function POST(request: NextRequest) {
     if (error instanceof AppError) {
       return errorResponse(error.message, error.statusCode, error.code);
     }
-    return errorResponse("Tarama başarısız", 500, "INTERNAL_ERROR");
+    return handleApiError(request, error, "Tarama başarısız");
   }
 }

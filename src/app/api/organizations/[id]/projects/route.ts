@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { createProjectSchema } from "@/schemas/project.schema";
 import * as projectService from "@/services/project.service";
-import { successResponse, errorResponse } from "@/utils/api-response";
+import { successResponse, errorResponse, handleApiError } from "@/utils/api-response";
 import { validateBody } from "@/middleware/validate";
 import { authenticate, AuthenticatedRequest } from "@/middleware/auth";
 import { checkIdempotency, clearIdempotency, failIdempotency } from "@/middleware/idempotency";
@@ -20,7 +20,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     if (error instanceof AppError) {
       return errorResponse(error.message, error.statusCode, error.code);
     }
-    return errorResponse("Projeler alınamadı", 500, "INTERNAL_ERROR");
+    return handleApiError(request, error, "Projeler alınamadı");
   }
 }
 
@@ -50,6 +50,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (error instanceof AppError) {
       return errorResponse(error.message, error.statusCode, error.code);
     }
-    return errorResponse("Proje oluşturulamadı", 500, "INTERNAL_ERROR");
+    return handleApiError(request, error, "Proje oluşturulamadı");
   }
 }

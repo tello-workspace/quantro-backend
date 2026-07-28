@@ -1,5 +1,6 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { ZodError } from "zod";
+import { logError } from "@/utils/logger";
 
 // Başarılı response
 type SuccessPayload<T = unknown> = {
@@ -32,6 +33,22 @@ export function errorResponse(
     error: { code, message },
   };
   return NextResponse.json(body, { status });
+}
+
+// catch bloklarindaki tekrar eden "AppError degilse genel 500 don" kalibinin
+// yerini alir: hatayi hem konsola hem ErrorLog tablosuna yazar (fire-and-forget,
+// loglama hicbir zaman route'un cevap suresini uzatmaz veya cevabi bozmaz).
+export function handleApiError(request: NextRequest, error: unknown, fallbackMessage: string) {
+  const userId = (request as unknown as { user?: { id: string } }).user?.id;
+
+  void logError({
+    error,
+    method: request.method,
+    path: request.nextUrl.pathname,
+    userId,
+  });
+
+  return errorResponse(fallbackMessage, 500, "INTERNAL_ERROR");
 }
 
 export function validationError(zodError: ZodError) {

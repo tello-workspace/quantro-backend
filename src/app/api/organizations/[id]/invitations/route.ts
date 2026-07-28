@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import * as organizationService from "@/services/organization.service";
-import { successResponse, errorResponse } from "@/utils/api-response";
+import { successResponse, errorResponse, handleApiError } from "@/utils/api-response";
 import { authenticate, AuthenticatedRequest } from "@/middleware/auth";
 import { AppError } from "@/utils/errors";
 
@@ -18,7 +18,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     if (error instanceof AppError) {
       return errorResponse(error.message, error.statusCode, error.code);
     }
-    return errorResponse("Davetler alınamadı", 500, "INTERNAL_ERROR");
+    return handleApiError(request, error, "Davetler alınamadı");
   }
 }
 
@@ -44,6 +44,6 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
     if (error instanceof AppError) {
       return errorResponse(error.message, error.statusCode, error.code);
     }
-    return errorResponse("Davet geri alınamadı", 500, "INTERNAL_ERROR");
+    return handleApiError(request, error, "Davet geri alınamadı");
   }
 }

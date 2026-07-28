@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { createBadgeSchema, assignBadgeSchema } from "@/schemas/organization.schema";
 import * as badgeService from "@/services/badge.service";
-import { successResponse, errorResponse } from "@/utils/api-response";
+import { successResponse, errorResponse, handleApiError } from "@/utils/api-response";
 import { validateBody } from "@/middleware/validate";
 import { authenticate, AuthenticatedRequest } from "@/middleware/auth";
 import { AppError } from "@/utils/errors";
@@ -20,7 +20,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     if (error instanceof AppError) {
       return errorResponse(error.message, error.statusCode, error.code);
     }
-    return errorResponse("Rozetler yüklenemedi", 500, "INTERNAL_ERROR");
+    return handleApiError(request, error, "Rozetler yüklenemedi");
   }
 }
 
@@ -40,7 +40,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (error instanceof AppError) {
       return errorResponse(error.message, error.statusCode, error.code);
     }
-    return errorResponse("Rozet oluşturulamadı", 500, "INTERNAL_ERROR");
+    return handleApiError(request, error, "Rozet oluşturulamadı");
   }
 }
 
@@ -61,6 +61,6 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
     if (error instanceof AppError) {
       return errorResponse(error.message, error.statusCode, error.code);
     }
-    return errorResponse("Rozet silinemedi", 500, "INTERNAL_ERROR");
+    return handleApiError(request, error, "Rozet silinemedi");
   }
 }

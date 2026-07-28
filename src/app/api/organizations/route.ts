@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { createOrganizationSchema } from "@/schemas/organization.schema";
 import * as organizationService from "@/services/organization.service";
-import { successResponse, errorResponse } from "@/utils/api-response";
+import { successResponse, errorResponse, handleApiError } from "@/utils/api-response";
 import { validateBody } from "@/middleware/validate";
 import { authenticate, AuthenticatedRequest } from "@/middleware/auth";
 import { checkIdempotency, clearIdempotency, failIdempotency } from "@/middleware/idempotency";
@@ -19,7 +19,7 @@ export async function GET(request: NextRequest) {
     if (error instanceof AppError) {
       return errorResponse(error.message, error.statusCode, error.code);
     }
-    return errorResponse("Organizasyonlar alınamadı", 500, "INTERNAL_ERROR");
+    return handleApiError(request, error, "Organizasyonlar alınamadı");
   }
 }
 
@@ -48,6 +48,6 @@ export async function POST(request: NextRequest) {
     if (error instanceof AppError) {
       return errorResponse(error.message, error.statusCode, error.code);
     }
-    return errorResponse("Organizasyon oluşturulamadı", 500, "INTERNAL_ERROR");
+    return handleApiError(request, error, "Organizasyon oluşturulamadı");
   }
 }

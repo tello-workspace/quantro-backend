@@ -1,21 +1,26 @@
 import { NextRequest } from "next/server";
-import * as notificationService from "@/services/notification.service";
+import * as errorLogService from "@/services/error-log.service";
 import { successResponse, errorResponse, handleApiError } from "@/utils/api-response";
 import { authenticate, AuthenticatedRequest } from "@/middleware/auth";
 import { AppError } from "@/utils/errors";
 
-export async function PATCH(request: NextRequest) {
+// GET /api/error-logs - herhangi bir organizasyonda ADMIN olan kullanici
+// en son beklenmeyen (500) hatalari gorebilir.
+export async function GET(request: NextRequest) {
   const authError = await authenticate(request);
   if (authError) return authError;
 
   try {
     const user = (request as AuthenticatedRequest).user;
-    await notificationService.markAllAsRead(user.id);
-    return successResponse({ success: true });
+    const { searchParams } = new URL(request.url);
+    const limit = parseInt(searchParams.get("limit") ?? "50", 10);
+
+    const logs = await errorLogService.listErrorLogs(user.id, limit);
+    return successResponse(logs);
   } catch (error) {
     if (error instanceof AppError) {
       return errorResponse(error.message, error.statusCode, error.code);
     }
-    return handleApiError(request, error, "Bildirimler okunamadı");
+    return handleApiError(request, error, "Hata kayıtları alınamadı");
   }
 }

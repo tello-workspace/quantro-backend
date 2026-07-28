@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { attachLabelSchema } from "@/schemas/label.schema";
 import * as labelService from "@/services/label.service";
-import { successResponse, errorResponse } from "@/utils/api-response";
+import { successResponse, errorResponse, handleApiError } from "@/utils/api-response";
 import { validateBody } from "@/middleware/validate";
 import { authenticate, AuthenticatedRequest } from "@/middleware/auth";
 import { checkIdempotency, clearIdempotency, failIdempotency } from "@/middleware/idempotency";
@@ -33,7 +33,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (error instanceof AppError) {
       return errorResponse(error.message, error.statusCode, error.code);
     }
-    return errorResponse("Etiket eklenemedi", 500, "INTERNAL_ERROR");
+    return handleApiError(request, error, "Etiket eklenemedi");
   }
 }
 
@@ -53,6 +53,6 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
     if (error instanceof AppError) {
       return errorResponse(error.message, error.statusCode, error.code);
     }
-    return errorResponse("Etiket çıkarılamadı", 500, "INTERNAL_ERROR");
+    return handleApiError(request, error, "Etiket çıkarılamadı");
   }
 }
