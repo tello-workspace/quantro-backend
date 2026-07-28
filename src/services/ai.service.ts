@@ -1244,7 +1244,14 @@ Format:
 
   // Markdown code block'larını temizle (AI bazen ```json ... ``` ile dönebilir)
   let cleanText = responseText.replace(/```json/g, "").replace(/```/g, "").trim();
-  console.log(`[AI PUSH ANALYZER] Temizlenmiş Cevap: "${cleanText}"`);
+
+  // Konuşma/Düşünce metinleri arasından sadece JSON Array'i bulup çıkar
+  const firstBracket = cleanText.indexOf('[');
+  const lastBracket = cleanText.lastIndexOf(']');
+  if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
+    cleanText = cleanText.substring(firstBracket, lastBracket + 1);
+  }
+  console.log(`[AI PUSH ANALYZER] Temizlenmiş Cevap (Sadece JSON Array): "${cleanText}"`);
 
   try {
     const decisions = JSON.parse(cleanText);
