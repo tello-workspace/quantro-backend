@@ -8,7 +8,10 @@ import { initializeSocket } from "@/server/socket";
 
 const dev = process.env.NODE_ENV !== "production";
 const hostname = process.env.HOSTNAME || "localhost";
-const port = parseInt(process.env.PORT || "3001", 10);
+// Varsayilan 4000: .env.example, frontend ve VS Code eklentisi de bu portu
+// bekliyor. PORT tanimsizken 3001'e dusmek, tum istemcileri sessizce
+// baglanamaz hale getiriyordu.
+const port = parseInt(process.env.PORT || "4000", 10);
 
 const app = next({ dev, hostname, port });
 const handle = app.getRequestHandler();

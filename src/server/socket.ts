@@ -305,6 +305,50 @@ export function getIO(): SocketIOServer<ServerSocketEvents> | null {
   return globalForSocket.__io ?? null;
 }
 
+// ─── Oda Erisim Kontrolleri ─────────────────────────────────────────
+// REST tarafindaki checkMembership'in socket karsiligi. Proje/kart icin
+// baglanti anindaki sorguyla ayni OR kosulu kullanilir (sahip VEYA org uyesi).
+
+async function canAccessOrganization(userId: string, organizationId: string): Promise<boolean> {
+  const member = await prisma.organizationMember.findUnique({
+    where: { organizationId_userId: { organizationId, userId } },
+    select: { userId: true },
+  });
+  return Boolean(member);
+}
+
+async function canAccessProject(userId: string, projectId: string): Promise<boolean> {
+  const project = await prisma.project.findFirst({
+    where: {
+      id: projectId,
+      OR: [
+        { ownerId: userId },
+        { organization: { members: { some: { userId } } } },
+      ],
+    },
+    select: { id: true },
+  });
+  return Boolean(project);
+}
+
+async function canAccessCard(userId: string, cardId: string): Promise<boolean> {
+  const card = await prisma.card.findFirst({
+    where: {
+      id: cardId,
+      column: {
+        project: {
+          OR: [
+            { ownerId: userId },
+            { organization: { members: { some: { userId } } } },
+          ],
+        },
+      },
+    },
+    select: { id: true },
+  });
+  return Boolean(card);
+}
+
 export function initializeSocket(httpServer: HttpServer): SocketIOServer<ServerSocketEvents> {
   if (globalForSocket.__io) return globalForSocket.__io;
 
@@ -411,14 +455,20 @@ export function initializeSocket(httpServer: HttpServer): SocketIOServer<ServerS
 
     // Handle typing indicator
     socket.on(SocketEvents.USER_TYPING, (data: TypingPayload) => {
-      if (data.projectId) {
-        socket.to(`project:${data.projectId}`).emit(SocketEvents.USER_TYPING, {
-          userId: socket.userId,
-          userName: socket.userName,
-          cardId: data.cardId,
-          isTyping: data.isTyping,
-        });
-      }
+      if (!data.projectId) return;
+      // Erisimi olmayan biri baskasinin panosuna "yaziyor..." basmasin.
+      // Oda uyeligi yeterli kanit: proje odalarina giris DB ile dogrulaniyor.
+      const canBroadcast =
+        socket.projects?.includes(data.projectId) ||
+        socket.rooms.has(`project:${data.projectId}`);
+      if (!canBroadcast) return;
+
+      socket.to(`project:${data.projectId}`).emit(SocketEvents.USER_TYPING, {
+        userId: socket.userId,
+        userName: socket.userName,
+        cardId: data.cardId,
+        isTyping: data.isTyping,
+      });
     });
 
     // Organizasyon sohbetinde "yaziyor..." bilgisi.
@@ -427,8 +477,9 @@ export function initializeSocket(httpServer: HttpServer): SocketIOServer<ServerS
       const orgId = data?.organizationId;
       if (!orgId) return;
       // Sadece gercekten uyesi oldugu organizasyona yayabilsin.
-      // socket.organizations baglanti anindaki liste; davet kabul edilince
-      // "join:org" ile odaya sonradan girildigi icin oda uyeligi de kabul edilir.
+      // Iki kaynak da guvenilir: socket.organizations baglanti aninda DB'den
+      // dogrulandi, org odasina giris ise "join:org" handler'inda DB'den
+      // dogrulaniyor. Yani odada olmak, uyeligin kanitidir.
       const isMember =
         socket.organizations?.includes(orgId) || socket.rooms.has(`org:${orgId}`);
       if (!isMember) return;
@@ -441,22 +492,50 @@ export function initializeSocket(httpServer: HttpServer): SocketIOServer<ServerS
       });
     });
 
-    // Handle joining specific project room (for real-time board updates)
-    socket.on("join:project", (projectId: string) => {
+    // Oda katilimlari ISTEMCIDEN gelen ID ile tetikleniyor; bu yuzden uyelik
+    // her seferinde veritabanindan dogrulanir. Aksi halde herhangi bir kayitli
+    // kullanici rastgele bir ID yollayip uyesi olmadigi organizasyonun sohbetini,
+    // kart hareketlerini ve degisiklik taleplerini canli dinleyebilir.
+    //
+    // Dogrulama socket.organizations/projects listelerine DAYANMAZ: onlar
+    // baglanti anindaki anlik goruntudur ve davet kabulunden sonra bayat kalir
+    // (bu handler'larin var olma sebebi de zaten o).
+
+    socket.on("join:project", async (projectId: string) => {
+      if (!projectId || !socket.userId) return;
+      if (!(await canAccessProject(socket.userId, projectId))) {
+        console.warn(`[SOCKET] Yetkisiz join:project reddedildi — user:${socket.userId} project:${projectId}`);
+        return;
+      }
       socket.join(`project:${projectId}`);
+      if (socket.projects && !socket.projects.includes(projectId)) {
+        socket.projects.push(projectId);
+      }
     });
 
     socket.on("leave:project", (projectId: string) => {
       socket.leave(`project:${projectId}`);
     });
 
-    // Handle joining org room (for invitation acceptance)
-    socket.on("join:org", (organizationId: string) => {
+    // Davet kabul edildiginde yeniden baglanmadan odaya girebilmek icin
+    socket.on("join:org", async (organizationId: string) => {
+      if (!organizationId || !socket.userId) return;
+      if (!(await canAccessOrganization(socket.userId, organizationId))) {
+        console.warn(`[SOCKET] Yetkisiz join:org reddedildi — user:${socket.userId} org:${organizationId}`);
+        return;
+      }
       socket.join(`org:${organizationId}`);
+      if (socket.organizations && !socket.organizations.includes(organizationId)) {
+        socket.organizations.push(organizationId);
+      }
     });
 
-    // Handle joining card room (for comments, activity)
-    socket.on("join:card", (cardId: string) => {
+    socket.on("join:card", async (cardId: string) => {
+      if (!cardId || !socket.userId) return;
+      if (!(await canAccessCard(socket.userId, cardId))) {
+        console.warn(`[SOCKET] Yetkisiz join:card reddedildi — user:${socket.userId} card:${cardId}`);
+        return;
+      }
       socket.join(`card:${cardId}`);
     });
 
@@ -474,7 +553,7 @@ type SocketEventName = keyof ServerSocketEvents & string;
 export function broadcastToUser(userId: string, event: SocketEventName, data: unknown) {
   const ioServer = getIO();
   if (!ioServer) {
-    console.log(`[SOCKET] broadcastToUser: io is null, cannot emit ${event} to user:${userId}`);
+    console.warn(`[SOCKET] broadcastToUser: io is null, cannot emit ${event} to user:${userId}`);
     return;
   }
   (ioServer.to(`user:${userId}`).emit as (event: string, data: unknown) => void)(event, data);

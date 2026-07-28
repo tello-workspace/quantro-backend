@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import * as aiService from "@/services/ai.service";
 import { successResponse, errorResponse } from "@/utils/api-response";
 import { authenticate, AuthenticatedRequest } from "@/middleware/auth";
+import { checkAiRateLimit } from "@/middleware/rateLimit";
 import { AppError } from "@/utils/errors";
 
 export async function GET(request: NextRequest) {
@@ -10,6 +11,10 @@ export async function GET(request: NextRequest) {
 
   try {
     const user = (request as AuthenticatedRequest).user;
+
+    const rateLimitError = checkAiRateLimit(user.id, "ai:insights");
+    if (rateLimitError) return rateLimitError;
+
     const { searchParams } = new URL(request.url);
     const projectId = searchParams.get("projectId");
 

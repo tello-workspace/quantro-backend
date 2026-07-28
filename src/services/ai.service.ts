@@ -1120,19 +1120,23 @@ Format:
   };
 }
 
+
 export async function analyzePushAndMoveCards(userId: string, commitMessage: string, diff: string) {
   console.log(`[AI PUSH ANALYZER] Analiz başladı. User ID: ${userId}`);
   console.log(`[AI PUSH ANALYZER] Commit Mesajı: "${commitMessage}"`);
   console.log(`[AI PUSH ANALYZER] Git Diff Uzunluğu: ${diff ? diff.length : 0} karakter`);
 
-  // 1. Fetch user's cards
+  // 1. Fetch user's cards (bitmis/isDone sutunlardaki kartlar aday disi
+  // birakiliyor: zaten kapanmis bir isi push analizine gore yeniden
+  // acmaya/tasimaya gerek yok)
   const userCards = await prisma.card.findMany({
     where: {
       assignees: {
         some: {
           userId: userId
         }
-      }
+      },
+      column: { isDone: false },
     },
     include: {
       column: {
@@ -1169,12 +1173,17 @@ export async function analyzePushAndMoveCards(userId: string, commitMessage: str
     }))
   }));
 
+  // Diff cok buyuk olabiliyor (bazi commit'ler yuzlerce satir degistiriyor);
+  // AI'a gonderilecek token maliyetini ve isteginin boyutunu sinirlamak icin
+  // kirpiliyor.
+  const truncatedDiff = diff && diff.length > 4000 ? `${diff.slice(0, 4000)}\n... (diff kısaltıldı)` : diff;
+
   const prompt = `Sen bir yazılım proje yönetimi asistanısın. Bir geliştirici git push yaptı.
 Commit mesajı:
 ${commitMessage}
 
 Git diff:
-${diff}
+${truncatedDiff}
 
 Bu geliştiriciye atanan aktif kartlar şunlardır:
 ${JSON.stringify(cardsData, null, 2)}
@@ -1257,7 +1266,7 @@ Format:
   }
 
   // Markdown code block'larını temizle (AI bazen ```json ... ``` ile dönebilir)
-  let cleanText = responseText.replace(/```json/g, "").replace(/```/g, "").trim();
+  const cleanText = responseText.replace(/```json/g, "").replace(/```/g, "").trim();
 
   // Konuşma/Düşünce metinleri arasından JSON objesini veya array'ini bulup çıkar
   let decisions: any[] = [];
