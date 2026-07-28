@@ -1,9 +1,13 @@
 import { prisma } from "@/lib/prisma";
 import { NotFoundError, ForbiddenError } from "@/utils/errors";
 import * as notificationService from "@/services/notification.service";
+<<<<<<< Updated upstream
 import { notifyBlockerResolved } from "@/services/dependency.service";
 import { logActivity } from "@/services/activity.service";
 import { broadcastToProject, SocketEvents } from "@/server/socket";
+=======
+import { broadcastToProject, broadcastToUser, SocketEvents } from "@/server/socket";
+>>>>>>> Stashed changes
 import type { CreateCardInput, UpdateCardInput } from "@/schemas/card.schema";
 import type { Priority } from "@prisma/client";
 
@@ -68,6 +72,14 @@ async function validateAssignees(columnId: string, assigneeIds: string[]) {
   }
 }
 
+async function getProjectIdByCardId(cardId: string): Promise<string | null> {
+  const card = await prisma.card.findUnique({
+    where: { id: cardId },
+    select: { column: { select: { projectId: true } } },
+  });
+  return card?.column.projectId ?? null;
+}
+
 export async function createCard(columnId: string, input: CreateCardInput, userId: string) {
   const { role, projectId } = await checkColumnAccess(columnId, userId);
   if (role !== "ADMIN") {
@@ -105,6 +117,7 @@ export async function createCard(columnId: string, input: CreateCardInput, userI
     });
   }
 
+<<<<<<< Updated upstream
   broadcastToProject(projectId, SocketEvents.CARD_CREATED, {
     id: card.id,
     title: card.title,
@@ -118,6 +131,27 @@ export async function createCard(columnId: string, input: CreateCardInput, userI
   });
 
   await logActivity({ projectId, userId, type: "CARD_CREATED", cardId: card.id });
+=======
+  // Emit real-time event
+  const column = await prisma.column.findUnique({
+    where: { id: columnId },
+    select: { projectId: true },
+  });
+  if (column) {
+    broadcastToProject(column.projectId, SocketEvents.CARD_CREATED, {
+      id: card.id,
+      title: card.title,
+      description: card.description,
+      columnId: card.columnId,
+      projectId: column.projectId,
+      assigneeId: card.assigneeId,
+      assignee: card.assignee,
+      priority: card.priority,
+      dueDate: card.dueDate?.toISOString(),
+      position: card.position,
+    });
+  }
+>>>>>>> Stashed changes
 
   return card;
 }
@@ -251,8 +285,67 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
     include: assigneeInclude,
   });
 
+<<<<<<< Updated upstream
   // Sadece yeni eklenen atananlara bildirim gönder
   for (const assigneeId of newlyAssignedIds) {
+=======
+  // Emit real-time events
+  const projectId = await getProjectIdByCardId(cardId);
+  if (projectId) {
+    broadcastToProject(projectId, SocketEvents.CARD_UPDATED, {
+      id: updated.id,
+      title: updated.title,
+      description: updated.description,
+      columnId: updated.columnId,
+      projectId,
+      assigneeId: updated.assigneeId,
+      assignee: updated.assignee,
+      priority: updated.priority,
+      dueDate: updated.dueDate?.toISOString(),
+      position: updated.position,
+    });
+
+    // If column changed, emit CARD_MOVED
+    if (isColumnChange && input.columnId) {
+      broadcastToProject(projectId, SocketEvents.CARD_MOVED, {
+        cardId: updated.id,
+        fromColumnId: card.columnId,
+        toColumnId: input.columnId,
+        position: updated.position,
+        projectId,
+      });
+    }
+
+    // If assignee changed, emit CARD_ASSIGNED
+    if (input.assigneeId && input.assigneeId !== oldAssigneeId) {
+      broadcastToProject(projectId, SocketEvents.CARD_ASSIGNED, {
+        cardId: updated.id,
+        cardTitle: updated.title,
+        assigneeId: input.assigneeId,
+        assigneeName: updated.assignee?.name ?? "",
+        assignedById: userId,
+        assignedByName: "", // We could fetch user name if needed
+      });
+
+      // Also send notification to the specific user
+      if (updated.assigneeId) {
+        broadcastToUser(updated.assigneeId, SocketEvents.NOTIFICATION_NEW, {
+          id: `notif-${updated.id}-${Date.now()}`,
+          userId: updated.assigneeId,
+          type: "ASSIGNED",
+          message: `"${updated.title}" kartı size atandı`,
+          cardId: updated.id,
+          card: { id: updated.id, title: updated.title },
+          read: false,
+          createdAt: new Date().toISOString(),
+        });
+      }
+    }
+  }
+
+  // Atanan kişi değişmişse bildirim gönder (DB notification)
+  if (input.assigneeId && input.assigneeId !== oldAssigneeId) {
+>>>>>>> Stashed changes
     await notificationService.createNotification({
       userId: assigneeId,
       type: "ASSIGNED",
@@ -340,8 +433,11 @@ export async function deleteCard(cardId: string, userId: string) {
 
   const labelIds = card.labels.map((cl) => cl.labelId);
 
+  const projectId = await getProjectIdByCardId(cardId);
+
   await prisma.card.delete({ where: { id: cardId } });
 
+<<<<<<< Updated upstream
   // Clean up orphaned labels
   if (labelIds.length > 0) {
     for (const labelId of labelIds) {
@@ -357,4 +453,10 @@ export async function deleteCard(cardId: string, userId: string) {
   }
 
   broadcastToProject(projectId, SocketEvents.CARD_DELETED, { cardId, projectId });
+=======
+  // Emit real-time event
+  if (projectId) {
+    broadcastToProject(projectId, SocketEvents.CARD_DELETED, cardId);
+  }
+>>>>>>> Stashed changes
 }

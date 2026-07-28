@@ -54,12 +54,20 @@ export async function createColumn(projectId: string, input: CreateColumnInput, 
     },
   });
 
+<<<<<<< Updated upstream
+=======
+  // Emit real-time event
+>>>>>>> Stashed changes
   broadcastToProject(projectId, SocketEvents.COLUMN_CREATED, {
     id: column.id,
     name: column.name,
     projectId,
     position: column.position,
+<<<<<<< Updated upstream
     wipLimit: column.wipLimit ?? null,
+=======
+    wipLimit: column.wipLimit,
+>>>>>>> Stashed changes
     isDone: column.isDone,
   });
 
@@ -100,12 +108,20 @@ export async function updateColumn(columnId: string, input: UpdateColumnInput, u
     data: input,
   });
 
+<<<<<<< Updated upstream
+=======
+  // Emit real-time event
+>>>>>>> Stashed changes
   broadcastToProject(column.projectId, SocketEvents.COLUMN_UPDATED, {
     id: updated.id,
     name: updated.name,
     projectId: column.projectId,
     position: updated.position,
+<<<<<<< Updated upstream
     wipLimit: updated.wipLimit ?? null,
+=======
+    wipLimit: updated.wipLimit,
+>>>>>>> Stashed changes
     isDone: updated.isDone,
   });
 
@@ -120,9 +136,17 @@ export async function deleteColumn(columnId: string, userId: string) {
 
   await prisma.column.delete({ where: { id: columnId } });
 
+<<<<<<< Updated upstream
   broadcastToProject(column.projectId, SocketEvents.COLUMN_DELETED, {
     columnId,
     projectId: column.projectId,
+=======
+  // Emit real-time event
+  broadcastToProject(column.projectId, SocketEvents.COLUMN_DELETED, {
+    columnId,
+    projectId: column.projectId,
+    deletedBy: userId,
+>>>>>>> Stashed changes
   });
 }
 

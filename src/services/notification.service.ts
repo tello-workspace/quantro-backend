@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { broadcastToUser, SocketEvents } from "@/server/socket";
 import { NotFoundError, ForbiddenError } from "@/utils/errors";
 import { broadcastToUser, SocketEvents } from "@/server/socket";
 import type { NotificationType } from "@prisma/client";
@@ -26,7 +27,16 @@ export async function createNotification(input: CreateNotificationInput) {
     },
   });
 
+<<<<<<< Updated upstream
   broadcastToUser(input.userId, SocketEvents.NOTIFICATION_NEW, notification);
+=======
+  broadcastToUser(input.userId, SocketEvents.NOTIFICATION_NEW, {
+    ...notification,
+    card: notification.card ?? undefined,
+    read: notification.read,
+    createdAt: notification.createdAt.toISOString(),
+  });
+>>>>>>> Stashed changes
 
   return notification;
 }

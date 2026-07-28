@@ -55,6 +55,10 @@ export async function createProject(organizationId: string, input: CreateProject
     userId, // yapan hariç
   );
 
+<<<<<<< Updated upstream
+=======
+  // Emit real-time event
+>>>>>>> Stashed changes
   broadcastToOrganization(organizationId, SocketEvents.PROJECT_CREATED, {
     id: project.id,
     name: project.name,
@@ -128,12 +132,20 @@ export async function updateProject(organizationId: string, projectId: string, i
     data: input,
   });
 
+<<<<<<< Updated upstream
+=======
+  // Emit real-time event
+>>>>>>> Stashed changes
   broadcastToOrganization(organizationId, SocketEvents.PROJECT_UPDATED, {
     id: updated.id,
     name: updated.name,
     description: updated.description,
     organizationId,
+<<<<<<< Updated upstream
     ownerId: updated.ownerId,
+=======
+    ownerId: project.ownerId,
+>>>>>>> Stashed changes
   });
 
   return updated;
@@ -159,6 +171,9 @@ export async function deleteProject(organizationId: string, projectId: string, u
     `"${project.name}" projesi silindi`,
     userId, // yapan hariç
   );
+
+  // Emit real-time event
+  broadcastToOrganization(organizationId, SocketEvents.PROJECT_DELETED, projectId);
 
   await prisma.project.delete({ where: { id: projectId } });
 

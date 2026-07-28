@@ -66,13 +66,10 @@ export async function getMyOrganizations(userId: string) {
 export async function getOrganizationById(organizationId: string, userId: string) {
   // Uyelik kontrolu ile asil sorgu birbirinden bagimsiz: paralel calistirip
   // bir gidis-donus kazaniyoruz. Yetki yoksa veri donmeden hata firlatiliyor.
-  // relationLoadStrategy: "join" ise members -> user ve projects iliskilerini
-  // ayri sorgular yerine tek SQL'de getiriyor.
   const [member, org] = await Promise.all([
     checkMembership(organizationId, userId),
     prisma.organization.findUnique({
       where: { id: organizationId },
-      relationLoadStrategy: "join",
       include: {
         badges: {
           include: {
@@ -86,6 +83,7 @@ export async function getOrganizationById(organizationId: string, userId: string
                 id: true,
                 name: true,
                 email: true,
+                badges: { include: { badge: true } },
               },
             },
           },
@@ -221,6 +219,15 @@ export async function acceptInvitation(invitationId: string, userId: string) {
     role: member.role,
   });
 
+  // Emit real-time event
+  broadcastToOrganization(organizationId, SocketEvents.ORG_MEMBER_ADDED, {
+    organizationId,
+    userId: user.id,
+    userName: user.name,
+    role: input.role ?? "MEMBER",
+    message: `"${org?.name ?? "Organizasyon"}" organizasyonuna katıldı`,
+  });
+
   return member;
 }
 
@@ -288,6 +295,14 @@ export async function removeMember(organizationId: string, memberUserId: string,
     message: `"${org?.name ?? "Organizasyon"}" organizasyonundan çıkarıldınız`,
   });
 
+  // Emit real-time event
+  broadcastToOrganization(organizationId, SocketEvents.ORG_MEMBER_REMOVED, {
+    organizationId,
+    userId: memberUserId,
+    userName: member.user?.name ?? "Bilinmeyen",
+    message: `"${org?.name ?? "Organizasyon"}" organizasyonundan çıkarıldı`,
+  });
+
   await prisma.organizationMember.delete({
     where: { organizationId_userId: { organizationId, userId: memberUserId } },
   });
@@ -333,8 +348,9 @@ export async function updateMemberRole(organizationId: string, input: UpdateMemb
   broadcastToOrganization(organizationId, SocketEvents.ORG_MEMBER_ROLE_CHANGED, {
     organizationId,
     userId: input.userId,
-    userName: updated.user.name,
+    userName: updated.user?.name ?? "Bilinmeyen",
     role: input.role,
+    message: `"${org.name}" organizasyonunda rolü değiştirildi: ${input.role}`,
   });
 
   return updated;
