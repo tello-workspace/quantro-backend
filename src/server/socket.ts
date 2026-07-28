@@ -71,6 +71,9 @@ export interface ServerSocketEvents {
   [SocketEvents.WORKLOAD_IMBALANCE]: (data: WorkloadPayload) => void;
   [SocketEvents.DEADLINE_RISK]: (data: DeadlineRiskPayload) => void;
 
+  // Git Cakisma Erken Uyari (VSCode extension presence sinyalinden turetilir)
+  [SocketEvents.CONFLICT_DETECTED]: (data: ConflictPayload) => void;
+
   // Presence
   [SocketEvents.USER_ONLINE]: (userId: string) => void;
   [SocketEvents.USER_OFFLINE]: (userId: string) => void;
@@ -139,6 +142,9 @@ export enum SocketEvents {
   STALE_CARD_DETECTED = "insight:stale_card",
   WORKLOAD_IMBALANCE = "insight:workload_imbalance",
   DEADLINE_RISK = "insight:deadline_risk",
+
+  // Git Cakisma Erken Uyari
+  CONFLICT_DETECTED = "conflict:detected",
 
   // Presence
   USER_ONLINE = "presence:online",
@@ -305,6 +311,28 @@ export interface TypingPayload {
   isTyping: boolean;
 }
 
+// VSCode extension'dan gelen "su an bu dosyada calisiyorum" sinyali
+// dosya-seviyesinde kesisince uretilir. Satir/hunk analizi yok — bu yuzden
+// "kesin cakisma" degil "risk" olarak sunulmali.
+export interface ConflictCardRef {
+  id: string;
+  title: string;
+  projectId: string;
+}
+
+export interface ConflictUserRef {
+  id: string;
+  name: string;
+}
+
+export interface ConflictPayload {
+  filePath: string;
+  cardA: ConflictCardRef;
+  userA: ConflictUserRef;
+  cardB: ConflictCardRef;
+  userB: ConflictUserRef;
+}
+
 // Socket with user info
 export interface AuthenticatedSocket extends Socket {
   userId?: string;
@@ -365,6 +393,46 @@ async function canAccessCard(userId: string, cardId: string): Promise<boolean> {
     select: { id: true },
   });
   return Boolean(card);
+}
+
+async function getAccessibleCard(userId: string, cardId: string): Promise<ConflictCardRef | null> {
+  const card = await prisma.card.findFirst({
+    where: {
+      id: cardId,
+      column: {
+        project: {
+          OR: [
+            { ownerId: userId },
+            { organization: { members: { some: { userId } } } },
+          ],
+        },
+      },
+    },
+    select: { id: true, title: true, column: { select: { projectId: true } } },
+  });
+  if (!card) return null;
+  return { id: card.id, title: card.title, projectId: card.column.projectId };
+}
+
+// ─── Git Cakisma Erken Uyari — Presence Takibi ─────────────────────────
+// Tek Node process oldugu icin (globalThis.__io ile ayni gerekce) Redis/DB
+// gerekmiyor: sadece process bellegindeki bir Map yeterli. Kalici veri degil,
+// VSCode'daki onSave/aktif-editor sinyallerinden turetilen anlik bir goruntu.
+//
+// filePath -> userId -> o an o dosyada hangi kartla calistigi
+const presenceByFile = new Map<string, Map<string, { cardId: string; cardTitle: string; userName: string; projectId: string }>>();
+// socket.id -> en son bildirilen dosya yolu (kullanici dosya degistirince eskisini temizlemek icin)
+const lastFileBySocket = new Map<string, string>();
+
+function clearPresence(socketId: string, userId: string) {
+  const prevFile = lastFileBySocket.get(socketId);
+  if (!prevFile) return;
+  const users = presenceByFile.get(prevFile);
+  if (users) {
+    users.delete(userId);
+    if (users.size === 0) presenceByFile.delete(prevFile);
+  }
+  lastFileBySocket.delete(socketId);
 }
 
 export function initializeSocket(httpServer: HttpServer): SocketIOServer<ServerSocketEvents> {
@@ -468,7 +536,58 @@ export function initializeSocket(httpServer: HttpServer): SocketIOServer<ServerS
     // Handle disconnect
     socket.on("disconnect", (reason) => {
       console.log(`Socket disconnected: ${socket.userName} (${socket.userId}) - ${reason}`);
+      clearPresence(socket.id, socket.userId!);
       broadcastUserOffline(socket.userId!);
+    });
+
+    // VSCode extension: kullanici bir dosyayi kaydetti / aktif editoru degisti.
+    // Ayni dosyada FARKLI bir kartla calisan baska biri varsa conflict:detected yayilir.
+    socket.on("presence:file", async (data: { cardId?: string; filePath?: string }) => {
+      if (!socket.userId || !data?.cardId || !data?.filePath) return;
+
+      const cardInfo = await getAccessibleCard(socket.userId, data.cardId);
+      if (!cardInfo) return;
+
+      // Kullanicinin onceki dosyasindaki kaydini temizle — tek seferde tek dosya sayilir.
+      clearPresence(socket.id, socket.userId);
+
+      const filePath = data.filePath;
+      let usersOnFile = presenceByFile.get(filePath);
+      if (!usersOnFile) {
+        usersOnFile = new Map();
+        presenceByFile.set(filePath, usersOnFile);
+      }
+      usersOnFile.set(socket.userId, {
+        cardId: cardInfo.id,
+        cardTitle: cardInfo.title,
+        userName: socket.userName || "Bilinmeyen",
+        projectId: cardInfo.projectId,
+      });
+      lastFileBySocket.set(socket.id, filePath);
+
+      for (const [otherUserId, otherInfo] of usersOnFile) {
+        if (otherUserId === socket.userId) continue;
+        if (otherInfo.cardId === cardInfo.id) continue; // ayni kart = isbirligi, cakisma degil
+
+        const payload: ConflictPayload = {
+          filePath,
+          cardA: { id: cardInfo.id, title: cardInfo.title, projectId: cardInfo.projectId },
+          userA: { id: socket.userId, name: socket.userName || "Bilinmeyen" },
+          cardB: { id: otherInfo.cardId, title: otherInfo.cardTitle, projectId: otherInfo.projectId },
+          userB: { id: otherUserId, name: otherInfo.userName },
+        };
+
+        broadcastToProject(cardInfo.projectId, SocketEvents.CONFLICT_DETECTED, payload);
+        if (otherInfo.projectId !== cardInfo.projectId) {
+          broadcastToProject(otherInfo.projectId, SocketEvents.CONFLICT_DETECTED, payload);
+        }
+      }
+    });
+
+    // Kullanici karttan ayrildi / oturumu kapatti — presence kaydini elle temizle
+    socket.on("presence:clear", () => {
+      if (!socket.userId) return;
+      clearPresence(socket.id, socket.userId);
     });
 
     // Handle typing indicator

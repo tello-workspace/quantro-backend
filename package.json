@@ -14,7 +14,8 @@
     "db:studio": "prisma studio",
     "db:reset": "prisma migrate reset --force",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:conflict": "node scripts/conflict-test.js"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",
