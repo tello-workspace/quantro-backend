@@ -747,10 +747,6 @@ async function getBoardContext(projectId: string): Promise<string> {
             id: true,
             name: true,
             email: true,
-            title: true,
-            expertiseAreas: true,
-            languages: true,
-            badges: { include: { badge: { select: { id: true, name: true, color: true, icon: true } } } },
           },
         },
       },
@@ -768,8 +764,8 @@ async function getBoardContext(projectId: string): Promise<string> {
   // Kullanıcılar (rozet + kendi profillerinde beyan ettikleri uzmanlık/dil bilgisiyle)
   parts.push(
     `Organizasyon üyeleri:\n${members
-      .map((m) => {
-        const badges = m.user.badges?.map((ub) => ub.badge.name).join(", ");
+      .map((m: any) => {
+        const badges = m.user.badges?.map((ub: any) => ub.badge.name).join(", ");
         const extras: string[] = [];
         if (m.user.title) extras.push(`Unvan: ${m.user.title}`);
         if (badges) extras.push(`Yetkinlik (rozet): ${badges}`);
@@ -1125,6 +1121,10 @@ Format:
 }
 
 export async function analyzePushAndMoveCards(userId: string, commitMessage: string, diff: string) {
+  console.log(`[AI PUSH ANALYZER] Analiz başladı. User ID: ${userId}`);
+  console.log(`[AI PUSH ANALYZER] Commit Mesajı: "${commitMessage}"`);
+  console.log(`[AI PUSH ANALYZER] Git Diff Uzunluğu: ${diff ? diff.length : 0} karakter`);
+
   // 1. Fetch user's cards
   const userCards = await prisma.card.findMany({
     where: {
@@ -1147,7 +1147,13 @@ export async function analyzePushAndMoveCards(userId: string, commitMessage: str
     }
   });
 
+  console.log(`[AI PUSH ANALYZER] Kullanıcıya atanan kart sayısı: ${userCards.length}`);
+  userCards.forEach(c => {
+    console.log(`  -> Kart ID: ${c.id} | Başlık: "${c.title}" | Sütun: "${c.column.name}" | Proje: "${c.column.project.name}"`);
+  });
+
   if (userCards.length === 0) {
+    console.log(`[AI PUSH ANALYZER] Kullanıcının atalı olduğu aktif kart yok, çıkılıyor.`);
     return { movedCards: [] };
   }
 
@@ -1194,6 +1200,8 @@ Format:
   ];
 
   const provider = getProvider();
+  console.log(`[AI PUSH ANALYZER] Seçilen AI Sağlayıcı: ${provider.provider} | Model: ${provider.model}`);
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 20000);
 
@@ -1214,46 +1222,68 @@ Format:
           .map((p) => p.text)
           .join("")
           .trim();
+      } else {
+        console.error(`[AI PUSH ANALYZER] Gemini raw hatası:`, error);
       }
     } else {
       const result = await callOpenAI(provider, messages, undefined, controller.signal);
       responseText = result.content || "";
     }
   } catch (err) {
-    console.error("[AI PUSH ANALYZER] Hata:", err);
+    console.error("[AI PUSH ANALYZER] AI çağrısı sırasında hata:", err);
   } finally {
     clearTimeout(timeout);
   }
 
+  console.log(`[AI PUSH ANALYZER] AI Ham Cevap: "${responseText}"`);
+
   if (!responseText) {
+    console.log(`[AI PUSH ANALYZER] AI'dan yanıt gelmedi, çıkılıyor.`);
     return { movedCards: [] };
   }
 
   // Markdown code block'larını temizle (AI bazen ```json ... ``` ile dönebilir)
   let cleanText = responseText.replace(/```json/g, "").replace(/```/g, "").trim();
+  console.log(`[AI PUSH ANALYZER] Temizlenmiş Cevap: "${cleanText}"`);
 
   try {
     const decisions = JSON.parse(cleanText);
+    console.log(`[AI PUSH ANALYZER] Ayrıştırılan Kararlar:`, decisions);
+
     if (!Array.isArray(decisions)) {
+      console.log(`[AI PUSH ANALYZER] Kararlar bir array değil, çıkılıyor.`);
       return { movedCards: [] };
     }
 
     const movedCards: any[] = [];
     for (const decision of decisions) {
       const { cardId, targetColumnId, reason } = decision;
-      if (!cardId || !targetColumnId) continue;
+      if (!cardId || !targetColumnId) {
+        console.log(`[AI PUSH ANALYZER] Geçersiz karar verisi:`, decision);
+        continue;
+      }
 
       // Kartın ve hedef sütunun bu kullanıcının erişebileceği projede olduğunu doğrula
       const card = userCards.find(c => c.id === cardId);
-      if (!card) continue;
+      if (!card) {
+        console.log(`[AI PUSH ANALYZER] Kart bulutunda veya kullanıcının kartları arasında bulunamadı: ${cardId}`);
+        continue;
+      }
 
       const targetColumn = card.column.project.columns.find(col => col.id === targetColumnId);
-      if (!targetColumn) continue;
+      if (!targetColumn) {
+        console.log(`[AI PUSH ANALYZER] Hedef sütun bulunamadı: ${targetColumnId}`);
+        continue;
+      }
 
       // Zaten o sütundaysa taşıma
-      if (card.columnId === targetColumnId) continue;
+      if (card.columnId === targetColumnId) {
+        console.log(`[AI PUSH ANALYZER] Kart zaten hedef sütunda ("${targetColumn.name}"), taşıma yapılmadı.`);
+        continue;
+      }
 
       // Kartı taşı!
+      console.log(`[AI PUSH ANALYZER] Kart taşınıyor! Kart: "${card.title}" -> Hedef Sütun: "${targetColumn.name}" (Gerekçe: ${reason})`);
       await cardService.updateCard(cardId, { columnId: targetColumnId }, userId);
       movedCards.push({
         cardId,
