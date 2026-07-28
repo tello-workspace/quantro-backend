@@ -1099,3 +1099,150 @@ Format:
   };
 }
 
+export async function analyzePushAndMoveCards(userId: string, commitMessage: string, diff: string) {
+  // 1. Fetch user's cards
+  const userCards = await prisma.card.findMany({
+    where: {
+      assignees: {
+        some: {
+          userId: userId
+        }
+      }
+    },
+    include: {
+      column: {
+        include: {
+          project: {
+            include: {
+              columns: true
+            }
+          }
+        }
+      }
+    }
+  });
+
+  if (userCards.length === 0) {
+    return { movedCards: [] };
+  }
+
+  const cardsData = userCards.map(c => ({
+    id: c.id,
+    title: c.title,
+    description: c.description || "",
+    currentColumn: c.column.name,
+    projectTitle: c.column.project.name,
+    availableColumns: c.column.project.columns.map(col => ({
+      id: col.id,
+      name: col.name
+    }))
+  }));
+
+  const prompt = `Sen bir yazılım proje yönetimi asistanısın. Bir geliştirici git push yaptı.
+Commit mesajı:
+${commitMessage}
+
+Git diff:
+${diff}
+
+Bu geliştiriciye atanan aktif kartlar şunlardır:
+${JSON.stringify(cardsData, null, 2)}
+
+Görevin:
+1. Geliştiricinin yaptığı kod değişikliklerini (diff) ve commit mesajını analiz ederek, atanan kartlardan hangilerinin durumunun değişmesi gerektiğini tespit et.
+2. Örneğin, commit mesajında "fix #12" diyorsa veya kodda o kartın başlığıyla/açıklamasıyla ilgili bir özellik/hata çözülmüşse veya test edilmişse, kartı en uygun sütuna ("Yapılıyor", "Test", "Done/Bitti", vb.) geçir. Eşleşme yoksa o kart için bir değişiklik önerme.
+3. Çıktıyı SADECE aşağıdaki JSON formatında ver. Açıklama veya markdown (code block gibi) EKLENEMEZ. Sadece saf JSON stringi dön.
+
+Format:
+[
+  {
+    "cardId": "kart_id_değeri",
+    "targetColumnId": "hedef_kolon_id_değeri",
+    "reason": "Kısa Türkçe gerekçe"
+  }
+]
+`;
+
+  const messages: ChatMessage[] = [
+    { role: "system", content: "Sen sadece JSON formatında çıktı veren bir proje yönetimi asistanısın." },
+    { role: "user", content: prompt },
+  ];
+
+  const provider = getProvider();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20000);
+
+  let responseText = "";
+  try {
+    if (provider.provider === "google-gemini") {
+      const { contents, systemInstruction } = toGeminiContents(messages);
+      const { parts, error } = await callGeminiRaw(
+        provider,
+        contents,
+        systemInstruction,
+        false,
+        controller.signal,
+      );
+      if (!error) {
+        responseText = parts
+          .filter((p): p is { text: string } => "text" in p)
+          .map((p) => p.text)
+          .join("")
+          .trim();
+      }
+    } else {
+      const result = await callOpenAI(provider, messages, undefined, controller.signal);
+      responseText = result.content || "";
+    }
+  } catch (err) {
+    console.error("[AI PUSH ANALYZER] Hata:", err);
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  if (!responseText) {
+    return { movedCards: [] };
+  }
+
+  // Markdown code block'larını temizle (AI bazen ```json ... ``` ile dönebilir)
+  let cleanText = responseText.replace(/```json/g, "").replace(/```/g, "").trim();
+
+  try {
+    const decisions = JSON.parse(cleanText);
+    if (!Array.isArray(decisions)) {
+      return { movedCards: [] };
+    }
+
+    const movedCards: any[] = [];
+    for (const decision of decisions) {
+      const { cardId, targetColumnId, reason } = decision;
+      if (!cardId || !targetColumnId) continue;
+
+      // Kartın ve hedef sütunun bu kullanıcının erişebileceği projede olduğunu doğrula
+      const card = userCards.find(c => c.id === cardId);
+      if (!card) continue;
+
+      const targetColumn = card.column.project.columns.find(col => col.id === targetColumnId);
+      if (!targetColumn) continue;
+
+      // Zaten o sütundaysa taşıma
+      if (card.columnId === targetColumnId) continue;
+
+      // Kartı taşı!
+      await cardService.updateCard(cardId, { columnId: targetColumnId }, userId);
+      movedCards.push({
+        cardId,
+        cardTitle: card.title,
+        oldColumn: card.column.name,
+        newColumn: targetColumn.name,
+        reason
+      });
+    }
+
+    return { movedCards };
+  } catch (parseErr) {
+    console.error("[AI PUSH ANALYZER] JSON parse hatası:", parseErr, "Raw response:", responseText);
+    return { movedCards: [] };
+  }
+}
+
