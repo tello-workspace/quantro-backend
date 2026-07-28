@@ -3,9 +3,21 @@ import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
 import { signToken } from "@/utils/jwt";
 import { ConflictError, UnauthorizedError } from "@/utils/errors";
-import type { RegisterInput, LoginInput, UpdateProfileInput } from "@/schemas/auth.schema";
+import { sendPasswordResetEmail } from "@/utils/email";
+import type {
+  RegisterInput,
+  LoginInput,
+  ForgotPasswordInput,
+  ResetPasswordInput,
+  UpdateProfileInput,
+} from "@/schemas/auth.schema";
 
 const SALT_ROUNDS = 10;
+const RESET_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 saat
+
+function hashToken(token: string): string {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
 
 export type AuthResult = {
   token: string;
@@ -83,6 +95,57 @@ export async function oauthLogin(email: string, name: string): Promise<AuthResul
     token,
     user: { id: user.id, name: user.name, email: user.email },
   };
+}
+
+// Kullanicinin var olup olmadigini disariya sizdirmamak icin her zaman ayni
+// (basarili) yaniti donuyoruz; e-posta yalnizca kullanici gercekten varsa
+// gonderiliyor.
+export async function requestPasswordReset(input: ForgotPasswordInput): Promise<void> {
+  const user = await prisma.user.findUnique({ where: { email: input.email } });
+  if (!user) return;
+
+  const rawToken = crypto.randomBytes(32).toString("hex");
+  const tokenHash = hashToken(rawToken);
+
+  await prisma.passwordResetToken.create({
+    data: {
+      userId: user.id,
+      tokenHash,
+      expiresAt: new Date(Date.now() + RESET_TOKEN_TTL_MS),
+    },
+  });
+
+  const frontendUrl = process.env.FRONTEND_URL?.split(",")[0]?.trim() || "http://localhost:3000";
+  const resetUrl = `${frontendUrl}/reset-password?token=${rawToken}`;
+
+  await sendPasswordResetEmail(user.email, resetUrl);
+}
+
+export async function resetPassword(input: ResetPasswordInput): Promise<void> {
+  const tokenHash = hashToken(input.token);
+
+  const resetToken = await prisma.passwordResetToken.findUnique({
+    where: { tokenHash },
+  });
+
+  if (!resetToken || resetToken.usedAt || resetToken.expiresAt < new Date()) {
+    throw new UnauthorizedError("Token geçersiz veya süresi dolmuş");
+  }
+
+  const passwordHash = await bcrypt.hash(input.password, SALT_ROUNDS);
+
+  await prisma.$transaction([
+    prisma.user.update({
+      where: { id: resetToken.userId },
+      data: { passwordHash },
+    }),
+    // Bu token'i kullanildi olarak isaretle, kullanicinin diger tum bekleyen
+    // linklerini de gecersiz kil (biri sizmis olabilir).
+    prisma.passwordResetToken.updateMany({
+      where: { userId: resetToken.userId, usedAt: null },
+      data: { usedAt: new Date() },
+    }),
+  ]);
 }
 
 const PROFILE_SELECT = {

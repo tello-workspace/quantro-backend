@@ -22,6 +22,15 @@ export const loginSchema = z.object({
     .min(1, "Şifre gerekli"),
 });
 
+export const forgotPasswordSchema = z.object({
+  email: z.string().email("Geçerli bir email adresi girin"),
+});
+
+export const resetPasswordSchema = z.object({
+  token: z.string().min(1, "Token gerekli"),
+  password: z.string().min(6, "Şifre en az 6 karakter olmalı"),
+});
+
 export const updateProfileSchema = z.object({
   title: z.string().max(100).optional().nullable(),
   bio: z.string().max(1000).optional().nullable(),
@@ -34,4 +43,6 @@ export const updateProfileSchema = z.object({
 
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
+export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
+export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
 export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
