@@ -1266,7 +1266,7 @@ Format:
   }
 
   // Markdown code block'larını temizle (AI bazen ```json ... ``` ile dönebilir)
-  let cleanText = responseText.replace(/```json/g, "").replace(/```/g, "").trim();
+  const cleanText = responseText.replace(/```json/g, "").replace(/```/g, "").trim();
 
   // Konuşma/Düşünce metinleri arasından JSON objesini veya array'ini bulup çıkar
   let decisions: any[] = [];
