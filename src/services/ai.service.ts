@@ -1182,20 +1182,22 @@ ${JSON.stringify(cardsData, null, 2)}
 Görevin:
 1. Geliştiricinin yaptığı kod değişikliklerini (diff) ve commit mesajını analiz ederek, atanan kartlardan hangilerinin durumunun değişmesi gerektiğini tespit et.
 2. Örneğin, commit mesajında "fix #12" diyorsa veya kodda o kartın başlığıyla/açıklamasıyla ilgili bir özellik/hata çözülmüşse veya test edilmişse, kartı en uygun sütuna ("Yapılıyor", "Test", "Done/Bitti", vb.) geçir. Eşleşme yoksa o kart için bir değişiklik önerme.
-3. Çıktıyı SADECE aşağıdaki JSON formatında ver. Açıklama veya markdown (code block gibi) EKLENEMEZ. Sadece saf JSON stringi dön.
+3. KESİNLİKLE hiçbir açıklama, analiz veya konuşma metni ekleme. SADECE aşağıdaki yapıda geçerli bir JSON objesi döndür.
 
 Format:
-[
-  {
-    "cardId": "kart_id_değeri",
-    "targetColumnId": "hedef_kolon_id_değeri",
-    "reason": "Kısa Türkçe gerekçe"
-  }
-]
+{
+  "decisions": [
+    {
+      "cardId": "kart_id_değeri",
+      "targetColumnId": "hedef_kolon_id_değeri",
+      "reason": "Kısa Türkçe gerekçe"
+    }
+  ]
+}
 `;
 
   const messages: ChatMessage[] = [
-    { role: "system", content: "Sen sadece JSON formatında çıktı veren bir proje yönetimi asistanısın." },
+    { role: "system", content: "Sen bir JSON API asistanısın. Yanıtında KESİNLİKLE açıklama, analiz, markdown veya normal metin kullanamazsın. SADECE istenen şemada geçerli bir JSON objesi döndür." },
     { role: "user", content: prompt },
   ];
 
@@ -1203,7 +1205,7 @@ Format:
   console.log(`[AI PUSH ANALYZER] Seçilen AI Sağlayıcı: ${provider.provider} | Model: ${provider.model}`);
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 20000);
+  const timeout = setTimeout(() => controller.abort(), 25000);
 
   let responseText = "";
   try {
@@ -1226,7 +1228,19 @@ Format:
         console.error(`[AI PUSH ANALYZER] Gemini raw hatası:`, error);
       }
     } else {
-      const result = await callOpenAI(provider, messages, undefined, controller.signal);
+      let result;
+      try {
+        result = await callOpenAI(
+          provider,
+          messages,
+          undefined,
+          controller.signal,
+          { type: "json_object" }
+        );
+      } catch (err) {
+        console.warn("[AI PUSH ANALYZER] JSON mode failed, falling back without it:", err);
+        result = await callOpenAI(provider, messages, undefined, controller.signal);
+      }
       responseText = result.content || "";
     }
   } catch (err) {
@@ -1245,30 +1259,72 @@ Format:
   // Markdown code block'larını temizle (AI bazen ```json ... ``` ile dönebilir)
   let cleanText = responseText.replace(/```json/g, "").replace(/```/g, "").trim();
 
-  // Konuşma/Düşünce metinleri arasından sadece JSON Array'i bulup çıkar
-  const firstBracket = cleanText.indexOf('[');
-  const lastBracket = cleanText.lastIndexOf(']');
-  if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
-    cleanText = cleanText.substring(firstBracket, lastBracket + 1);
-  }
-  console.log(`[AI PUSH ANALYZER] Temizlenmiş Cevap (Sadece JSON Array): "${cleanText}"`);
-
+  // Konuşma/Düşünce metinleri arasından JSON objesini veya array'ini bulup çıkar
+  let decisions: any[] = [];
   try {
-    const decisions = JSON.parse(cleanText);
-    console.log(`[AI PUSH ANALYZER] Ayrıştırılan Kararlar:`, decisions);
+    // Önce doğrudan parse etmeyi dene
+    const parsed = JSON.parse(cleanText);
+    decisions = Array.isArray(parsed) ? parsed : (parsed.decisions || []);
+  } catch (err) {
+    // Doğrudan parse başarısız olursa, parantez/küme parantezi bazlı ayıklamayı dene
+    const firstBracket = cleanText.indexOf('[');
+    const lastBracket = cleanText.lastIndexOf(']');
+    const firstCurly = cleanText.indexOf('{');
+    const lastCurly = cleanText.lastIndexOf('}');
 
-    if (!Array.isArray(decisions)) {
-      console.log(`[AI PUSH ANALYZER] Kararlar bir array değil, çıkılıyor.`);
-      return { movedCards: [] };
-    }
-
-    const movedCards: any[] = [];
-    for (const decision of decisions) {
-      const { cardId, targetColumnId, reason } = decision;
-      if (!cardId || !targetColumnId) {
-        console.log(`[AI PUSH ANALYZER] Geçersiz karar verisi:`, decision);
-        continue;
+    // Eğer array parantezleri varsa ve daha dıştaysa veya curly yoksa array dene
+    if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket && (firstCurly === -1 || firstBracket < firstCurly)) {
+      try {
+        const sliced = cleanText.substring(firstBracket, lastBracket + 1);
+        const parsed = JSON.parse(sliced);
+        decisions = Array.isArray(parsed) ? parsed : (parsed.decisions || []);
+      } catch (e2) {
+        // Array denemesi başarısız, curly dene
+        if (firstCurly !== -1 && lastCurly !== -1 && lastCurly > firstCurly) {
+          try {
+            const sliced = cleanText.substring(firstCurly, lastCurly + 1);
+            const parsed = JSON.parse(sliced);
+            decisions = Array.isArray(parsed) ? parsed : (parsed.decisions || []);
+          } catch (e3) {
+            console.error("[AI PUSH ANALYZER] Hem array hem obje ayıklama başarısız oldu:", e3);
+          }
+        }
       }
+    } else if (firstCurly !== -1 && lastCurly !== -1 && lastCurly > firstCurly) {
+      // Önce curly dene
+      try {
+        const sliced = cleanText.substring(firstCurly, lastCurly + 1);
+        const parsed = JSON.parse(sliced);
+        decisions = Array.isArray(parsed) ? parsed : (parsed.decisions || []);
+      } catch (e2) {
+        // Curly başarısız, bracket dene
+        if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
+          try {
+            const sliced = cleanText.substring(firstBracket, lastBracket + 1);
+            const parsed = JSON.parse(sliced);
+            decisions = Array.isArray(parsed) ? parsed : (parsed.decisions || []);
+          } catch (e3) {
+            console.error("[AI PUSH ANALYZER] Hem obje hem array ayıklama başarısız oldu:", e3);
+          }
+        }
+      }
+    }
+  }
+
+  console.log(`[AI PUSH ANALYZER] Ayrıştırılan Kararlar:`, decisions);
+
+  if (!Array.isArray(decisions)) {
+    console.log(`[AI PUSH ANALYZER] Kararlar bir array değil, çıkılıyor.`);
+    return { movedCards: [] };
+  }
+
+  const movedCards: any[] = [];
+  for (const decision of decisions) {
+    const { cardId, targetColumnId, reason } = decision;
+    if (!cardId || !targetColumnId) {
+      console.log(`[AI PUSH ANALYZER] Geçersiz karar verisi:`, decision);
+      continue;
+    }
 
       // Kartın ve hedef sütunun bu kullanıcının erişebileceği projede olduğunu doğrula
       const card = userCards.find(c => c.id === cardId);
