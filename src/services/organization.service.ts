@@ -82,7 +82,15 @@ export async function getOrganizationById(organizationId: string, userId: string
         members: {
           include: {
             user: {
-              select: { id: true, name: true, email: true, badges: { include: { badge: true } } },
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                title: true,
+                expertiseAreas: true,
+                languages: true,
+                badges: { include: { badge: true } },
+              },
             },
           },
         },

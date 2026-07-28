@@ -674,15 +674,19 @@ Adım 1 — Analiz: Görev açıklamasından hangi yetkinlik gerektiğini çıka
   - "tasarım", "UI/UX", "kullanıcı deneyimi" → UI/UX
 
 Adım 2 — Eşleştirme: Çıkardığın yetkinliğe sahip üyeleri organizasyon listesinden bul.
-  Her üyenin yanında "Yetkinlik: ..." şeklinde rozetleri listelenmiştir.
+  Her üyenin yanında admin tarafından verilmiş "Yetkinlik (rozet): ..." ve kullanıcının
+  kendi profilinde beyan ettiği "Uzmanlık alanları (profil): ..." / "Bildiği diller (profil): ..."
+  bilgileri listelenmiştir. İkisini birlikte değerlendir: rozet ile profil bilgisi birbirini
+  DOĞRULUYORSA (ikisi de aynı alanı işaret ediyorsa) o kişiyi güçlü aday say. Sadece rozeti
+  veya sadece profil bilgisi olan biri de geçerli bir adaydır, ikisi de yoksa aday değildir.
 
 Adım 3 — İş yükü optimizasyonu: Aynı yetkinlikte birden fazla kişi varsa, To Do ve
   In Progress sütunlarında daha az kartı olanı seç (kart listesinden kendin hesapla).
 
 Adım 4 — 🟡 Fallback (eşleşme yoksa):
-  Eğer gerekli yetkinliğe sahip hiçbir üye bulamazsan, KESİNLİKLE assign_users ÇAĞIRMA.
-  Görevi oluştur (create_card) ama kimseye atama. Kartın açıklamasına veya yanıtında
-  "Bu görev için [Yetkinlik Adı] rozetine sahip bir üye bulunamadı" yaz.
+  Eğer gerekli yetkinliğe (ne rozet ne profil) sahip hiçbir üye bulamazsan, KESİNLİKLE
+  assign_users ÇAĞIRMA. Görevi oluştur (create_card) ama kimseye atama. Kartın açıklamasına
+  veya yanıtında "Bu görev için uygun yetkinlik/uzmanlığa sahip bir üye bulunamadı" yaz.
 
 NOT: Proje ID'si, kolon ID'leri ve kullanıcı ID'leri aşağıda listelenmiştir. Kullanıcıya ID sorma, doğrudan kullan.
 
@@ -737,7 +741,19 @@ async function getBoardContext(projectId: string): Promise<string> {
     prisma.organizationMember.findMany({
       where: { organization: { projects: { some: { id: projectId } } } },
       relationLoadStrategy: "join",
-      include: { user: { select: { id: true, name: true, email: true, badges: { include: { badge: { select: { id: true, name: true, color: true, icon: true } } } } } } },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            title: true,
+            expertiseAreas: true,
+            languages: true,
+            badges: { include: { badge: { select: { id: true, name: true, color: true, icon: true } } } },
+          },
+        },
+      },
     }),
   ]);
 
@@ -749,12 +765,17 @@ async function getBoardContext(projectId: string): Promise<string> {
   parts.push(`Proje ID: ${project.id}`);
   parts.push(`Proje adı: ${project.name}`);
 
-  // Kullanıcılar (yetkinlik rozetleriyle)
+  // Kullanıcılar (rozet + kendi profillerinde beyan ettikleri uzmanlık/dil bilgisiyle)
   parts.push(
     `Organizasyon üyeleri:\n${members
       .map((m) => {
         const badges = m.user.badges?.map((ub) => ub.badge.name).join(", ");
-        return `  - ${m.user.name} (ID: ${m.user.id}, email: ${m.user.email})${badges ? ` — Yetkinlik: ${badges}` : ""}`;
+        const extras: string[] = [];
+        if (m.user.title) extras.push(`Unvan: ${m.user.title}`);
+        if (badges) extras.push(`Yetkinlik (rozet): ${badges}`);
+        if (m.user.expertiseAreas?.length) extras.push(`Uzmanlık alanları (profil): ${m.user.expertiseAreas.join(", ")}`);
+        if (m.user.languages?.length) extras.push(`Bildiği diller (profil): ${m.user.languages.join(", ")}`);
+        return `  - ${m.user.name} (ID: ${m.user.id}, email: ${m.user.email})${extras.length ? ` — ${extras.join(" | ")}` : ""}`;
       })
       .join("\n")}`
   );
@@ -969,7 +990,11 @@ Bugünün tarihi: ${today}
 
 Lütfen bu bilgilere dayanarak:
 1. Diğer görevlerin teslim tarihlerini ve yoğunluğunu analiz ederek, bu yeni görev için gerçekçi ve uygun bir son teslim tarihi (dueDate) belirle (KESİNLİKLE YYYY-MM-DD formatında gerçek bir tarih olmalıdır. Eğer tarih belirlenemezse bugünden 3 gün sonrasını yaz).
-2. Üyelerin mevcut iş yüklerini (yani üzerlerindeki aktif kart sayılarını) analiz ederek, bu göreve en müsait olan (en az iş yüküne sahip) en uygun organizasyon üyesini seç ve onun ID'sini (suggestedAssigneeId) yaz (KESİNLİKLE yukarıda listelenen üyelerden birinin ID'si olmalıdır. Eğer uygun üye yoksa null yaz).
+2. En uygun atanacak kişiyi (suggestedAssigneeId) şu ÖNCELİK SIRASINA göre seç:
+   a) ÖNCE İÇERİK EŞLEŞMESİ: Görev başlığından hangi yetkinliğin gerektiğini çıkar (örn. "API entegrasyonu" → Backend, "arayüz tasarımı" → Frontend/UI-UX, "dağıtım" → DevOps, "test" → Test/QA). Üyelerin yanında listelenen "Yetkinlik (rozet)", "Uzmanlık alanları (profil)" ve "Bildiği diller (profil)" bilgilerini bu gereksinimle karşılaştır ve en iyi eşleşen üye(leri) belirle.
+   b) EŞİTLİK DURUMUNDA İŞ YÜKÜ: Birden fazla üye aynı derecede uygunsa, aralarından mevcut aktif kart sayısı (iş yükü) en az olanı seç.
+   c) EŞLEŞME YOKSA: Hiçbir üyenin yetkinliği/uzmanlığı görevle örtüşmüyorsa, o zaman sadece iş yüküne bakarak en müsait üyeyi seç.
+   Seçtiğin kişinin ID'sini (suggestedAssigneeId) yaz (KESİNLİKLE yukarıda listelenen üyelerden birinin ID'si olmalıdır. Organizasyonda hiç üye yoksa null yaz).
 
 Görev Başlığı: "${title}"
 

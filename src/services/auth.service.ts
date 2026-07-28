@@ -3,7 +3,7 @@ import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
 import { signToken } from "@/utils/jwt";
 import { ConflictError, UnauthorizedError } from "@/utils/errors";
-import type { RegisterInput, LoginInput } from "@/schemas/auth.schema";
+import type { RegisterInput, LoginInput, UpdateProfileInput } from "@/schemas/auth.schema";
 
 const SALT_ROUNDS = 10;
 
@@ -85,15 +85,47 @@ export async function oauthLogin(email: string, name: string): Promise<AuthResul
   };
 }
 
+const PROFILE_SELECT = {
+  id: true,
+  name: true,
+  email: true,
+  createdAt: true,
+  title: true,
+  bio: true,
+  experience: true,
+  githubUrl: true,
+  linkedinUrl: true,
+  expertiseAreas: true,
+  languages: true,
+} as const;
+
 export async function getMe(userId: string) {
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { id: true, name: true, email: true, createdAt: true },
+    select: PROFILE_SELECT,
   });
 
   if (!user) {
     throw new UnauthorizedError("Kullanıcı bulunamadı");
   }
+
+  return user;
+}
+
+export async function updateProfile(userId: string, input: UpdateProfileInput) {
+  const user = await prisma.user.update({
+    where: { id: userId },
+    data: {
+      ...(input.title !== undefined && { title: input.title }),
+      ...(input.bio !== undefined && { bio: input.bio }),
+      ...(input.experience !== undefined && { experience: input.experience }),
+      ...(input.githubUrl !== undefined && { githubUrl: input.githubUrl }),
+      ...(input.linkedinUrl !== undefined && { linkedinUrl: input.linkedinUrl }),
+      ...(input.expertiseAreas !== undefined && { expertiseAreas: input.expertiseAreas }),
+      ...(input.languages !== undefined && { languages: input.languages }),
+    },
+    select: PROFILE_SELECT,
+  });
 
   return user;
 }
