@@ -25,29 +25,57 @@ function getClientIp(request: NextRequest): string {
   return request.headers.get("x-real-ip") ?? "unknown";
 }
 
-// Aynı IP'den aynı endpoint'e (login/register) kısa sürede çok fazla
-// deneme yapılırsa 429 döner. Kaba kuvvetle şifre tahminine karşı.
-export function checkRateLimit(request: NextRequest, key: string) {
-  const bucketKey = `${key}:${getClientIp(request)}`;
+// Ortak sayac mantigi: kova dolduysa 429 doner, dolmadiysa null.
+function consume(bucketKey: string, windowMs: number, max: number, mesaj: (dk: number) => string) {
   const now = Date.now();
-
   const bucket = attempts.get(bucketKey);
 
   if (!bucket || now > bucket.resetAt) {
-    attempts.set(bucketKey, { count: 1, resetAt: now + WINDOW_MS });
+    attempts.set(bucketKey, { count: 1, resetAt: now + windowMs });
     return null;
   }
 
   bucket.count += 1;
 
-  if (bucket.count > MAX_ATTEMPTS) {
+  if (bucket.count > max) {
     const retryMinutes = Math.ceil((bucket.resetAt - now) / 60000);
-    return errorResponse(
-      `Çok fazla deneme yaptınız. ${retryMinutes} dakika sonra tekrar deneyin.`,
-      429,
-      "RATE_LIMITED",
-    );
+    return errorResponse(mesaj(retryMinutes), 429, "RATE_LIMITED");
   }
 
   return null;
+}
+
+// Aynı IP'den aynı endpoint'e (login/register) kısa sürede çok fazla
+// deneme yapılırsa 429 döner. Kaba kuvvetle şifre tahminine karşı.
+export function checkRateLimit(request: NextRequest, key: string) {
+  return consume(
+    `${key}:${getClientIp(request)}`,
+    WINDOW_MS,
+    MAX_ATTEMPTS,
+    (dk) => `Çok fazla deneme yaptınız. ${dk} dakika sonra tekrar deneyin.`,
+  );
+}
+
+// AI uclari icin limitler. IP degil KULLANICI bazli:
+// - Maliyet kullaniciya ait; ayni ofisten (tek IP) calisan ekip ayni butceyi paylasmamali
+// - Kayit serbest oldugu icin sinirsiz AI cagrisi, kotayi tuketmenin en kolay yolu
+//
+// Pencere 15 dk. Degerler normal kullanimi engellemeyecek, ama dongude
+// cagirmayi anlamsiz kilacak sekilde secildi.
+const AI_LIMITS: Record<string, number> = {
+  "ai:chat": 40, // sohbet dogasi geregi patlamali kullanilir
+  "ai:fill": 30, // kart basina bir kez
+  "ai:insights": 15, // tum panoyu analiz eder, en pahalisi
+  "ai:analyze-push": 30, // her git push'ta bir kez
+};
+
+const AI_DEFAULT_LIMIT = 20;
+
+export function checkAiRateLimit(userId: string, key: keyof typeof AI_LIMITS | string) {
+  return consume(
+    `${key}:user:${userId}`,
+    WINDOW_MS,
+    AI_LIMITS[key] ?? AI_DEFAULT_LIMIT,
+    (dk) => `AI kullanım sınırına ulaştınız. ${dk} dakika sonra tekrar deneyin.`,
+  );
 }
