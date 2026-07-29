@@ -1,0 +1,20 @@
+name: Deploy to Render
+
+# CI workflow'u (typecheck/lint/test) main'de basariyla bitince tetiklenir -
+# boylece derlenmeyen/testi gecmeyen bir commit asla Render'a deploy edilmez.
+# Render'in GitHub App entegrasyonu bu organizasyona kurulu olmadigi icin
+# (bkz. github.com/organizations/tello-workspace/settings/installations)
+# otomatik deploy Render'in Deploy Hook URL'i uzerinden burada tetikleniyor.
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Render deploy hook'unu tetikle
+        run: curl -fsS -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}"
