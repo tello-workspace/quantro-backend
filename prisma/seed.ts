@@ -9,12 +9,12 @@ const now = () => new Date();
 const daysAgo = (n: number) => new Date(Date.now() - n * DAY);
 const daysFromNow = (n: number) => new Date(Date.now() + n * DAY);
 
-const DEMO_ORG_NAME = "Tello Demo";
+const DEMO_ORG_NAME = "Quantro Demo";
 const DEMO_EMAILS = [
-  "admin@tello.demo",
-  "mehmet@tello.demo",
-  "zeynep@tello.demo",
-  "can@tello.demo",
+  "admin@quantro.demo",
+  "mehmet@quantro.demo",
+  "zeynep@quantro.demo",
+  "can@quantro.demo",
 ];
 
 // Demo verisini tekrar tekrar `npm run db:seed` calistirilsa bile temiz
@@ -37,17 +37,17 @@ async function main() {
   // Demo kullanicilari dogrulanmis olusturuluyor - aksi halde login/AI test
   // scriptleri email dogrulama akisina takilir.
   const admin = await prisma.user.create({
-    data: { name: "Ayşe Yılmaz", email: "admin@tello.demo", passwordHash, emailVerifiedAt: now() },
+    data: { name: "Ayşe Yılmaz", email: "admin@quantro.demo", passwordHash, emailVerifiedAt: now() },
   });
   const mehmet = await prisma.user.create({
-    data: { name: "Mehmet Kaya", email: "mehmet@tello.demo", passwordHash, emailVerifiedAt: now() },
+    data: { name: "Mehmet Kaya", email: "mehmet@quantro.demo", passwordHash, emailVerifiedAt: now() },
   });
   const zeynep = await prisma.user.create({
-    data: { name: "Zeynep Demir", email: "zeynep@tello.demo", passwordHash, emailVerifiedAt: now() },
+    data: { name: "Zeynep Demir", email: "zeynep@quantro.demo", passwordHash, emailVerifiedAt: now() },
   });
   // Henuz organizasyona katilmamis - bekleyen davet akisini gostermek icin
   const can = await prisma.user.create({
-    data: { name: "Can Öztürk", email: "can@tello.demo", passwordHash, emailVerifiedAt: now() },
+    data: { name: "Can Öztürk", email: "can@quantro.demo", passwordHash, emailVerifiedAt: now() },
   });
 
   const org = await prisma.organization.create({
@@ -302,10 +302,10 @@ async function main() {
   });
 
   console.log("✅ Demo veri oluşturuldu:");
-  console.log("   admin@tello.demo / demo1234  (ADMIN - Ayşe Yılmaz)");
-  console.log("   mehmet@tello.demo / demo1234 (MEMBER - Mehmet Kaya, aşırı yüklü)");
-  console.log("   zeynep@tello.demo / demo1234 (MEMBER - Zeynep Demir)");
-  console.log("   can@tello.demo / demo1234    (henüz üye değil - bekleyen davet)");
+  console.log("   admin@quantro.demo / demo1234  (ADMIN - Ayşe Yılmaz)");
+  console.log("   mehmet@quantro.demo / demo1234 (MEMBER - Mehmet Kaya, aşırı yüklü)");
+  console.log("   zeynep@quantro.demo / demo1234 (MEMBER - Zeynep Demir)");
+  console.log("   can@quantro.demo / demo1234    (henüz üye değil - bekleyen davet)");
 }
 
 main()

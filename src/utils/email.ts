@@ -5,7 +5,7 @@ import { resolveMx } from "dns/promises";
 // konsola yazar - akis kirilmaz, sadece gercek mail gitmez.
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
-const FROM = process.env.RESEND_FROM_EMAIL || "Tello <onboarding@resend.dev>";
+const FROM = process.env.RESEND_FROM_EMAIL || "Quantro <onboarding@resend.dev>";
 
 export async function sendPasswordResetEmail(to: string, resetUrl: string) {
   if (!resend) {
@@ -16,7 +16,7 @@ export async function sendPasswordResetEmail(to: string, resetUrl: string) {
   await resend.emails.send({
     from: FROM,
     to,
-    subject: "Tello - Şifre Sıfırlama",
+    subject: "Quantro - Şifre Sıfırlama",
     html: `
       <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto;">
         <h2>Şifre Sıfırlama İsteği</h2>
@@ -37,11 +37,11 @@ export async function sendVerificationEmail(to: string, verifyUrl: string) {
   await resend.emails.send({
     from: FROM,
     to,
-    subject: "Tello - Email Adresini Doğrula",
+    subject: "Quantro - Email Adresini Doğrula",
     html: `
       <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto;">
         <h2>Hoş Geldin! 👋</h2>
-        <p>Tello'ya kayıt olduğun için teşekkürler. Hesabını aktifleştirmek için email adresini doğrulaman gerekiyor. Aşağıdaki bağlantıya tıkla. Bu bağlantı 24 saat geçerlidir.</p>
+        <p>Quantro'ya kayıt olduğun için teşekkürler. Hesabını aktifleştirmek için email adresini doğrulaman gerekiyor. Aşağıdaki bağlantıya tıkla. Bu bağlantı 24 saat geçerlidir.</p>
         <p><a href="${verifyUrl}" style="display:inline-block;padding:10px 20px;background:#4f46e5;color:#fff;text-decoration:none;border-radius:6px;">Email Adresimi Doğrula</a></p>
         <p style="color:#666;font-size:13px;">Bu kaydı siz yapmadıysanız bu e-postayı görmezden gelebilirsiniz.</p>
       </div>

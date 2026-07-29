@@ -607,7 +607,7 @@ async function callGeminiOnce(
       }
       return {
         parts: [],
-        // NOT: Bu Tello'nun kendi kullanim limiti DEGIL, Google Gemini'nin
+        // NOT: Bu Quantro'nun kendi kullanim limiti DEGIL, Google Gemini'nin
         // ucretsiz katman hiz siniri - checkAiRateLimit ile karistirilmasin.
         error: "⚠️ Google Gemini'nin ücretsiz kullanım sınırına takıldık. Lütfen birkaç saniye sonra tekrar deneyin.",
         retryable: true,
