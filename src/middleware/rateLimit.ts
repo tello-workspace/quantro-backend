@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { errorResponse } from "@/utils/api-response";
 
-const WINDOW_MS = 15 * 60 * 1000; // 15 dakika
+const WINDOW_MS = 30 * 1000; // 30 saniye
 const MAX_ATTEMPTS = 5;
 
 interface Bucket {
@@ -52,7 +52,7 @@ export function checkRateLimit(request: NextRequest, key: string) {
     `${key}:${getClientIp(request)}`,
     WINDOW_MS,
     MAX_ATTEMPTS,
-    (dk) => `Çok fazla deneme yaptınız. ${dk} dakika sonra tekrar deneyin.`,
+    (dk) => `Çok fazla deneme yaptınız. ${dk > 0 ? `${dk} dakika sonra` : 'Biraz sonra'} tekrar deneyin.`,
   );
 }
 
