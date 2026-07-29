@@ -30,6 +30,13 @@ kartların üzerinde turuncu uyarı rozeti ve kart detayında uyarı bandı beli
 seviyesindedir — satır/hunk analizi yapılmaz, yani **kesin çakışma değil risk
 sinyalidir**. Arayüzdeki dil de buna göre yazılmıştır.
 
+**Uyarı ne zaman kalkar?** Taraflardan biri başka bir dosyaya geçince, VSCode'u
+kapatınca veya "Kart Takibini Bırak" deyince `conflict:resolved` yayınlanır ve
+rozet sayfa yenilenmeden kaybolur. Ayrıca **15 dakikadır** yeni sinyal
+gelmemiş kayıtlar bayat sayılır: VSCode'u açık bırakıp giden birinin kaydı
+sonsuza kadar durup ertesi gün yanlış alarm üretmesin diye 5 dakikada bir
+taranıp temizlenir.
+
 ### Testi (sunum için)
 
 İki ayrı VSCode penceresi açmadan, iki kullanıcıyı taklit ederek uçtan uca test eder:
@@ -39,8 +46,11 @@ npm run dev          # ayrı bir terminalde açık kalmalı
 npm run test:conflict
 ```
 
-Beklenen çıktı: sonda iki adet `[!] conflict:detected alindi:` bloğu
-(A ve B tarafı için), içinde `filePath`, `cardA/cardB` ve `userA/userB` alanları.
+Beklenen çıktı:
+1. 5. adımdan sonra iki adet `[!] conflict:detected alindi:` bloğu (A ve B için),
+   içinde `filePath`, `cardA/cardB` ve `userA/userB` alanları
+2. 6. adımdan sonra (B başka dosyaya geçer) iki adet `[ok] conflict:resolved
+   alindi:` bloğu, içinde `filePath` ve `cardIds`
 
 Arayüzü de görmek istersen scripti çalıştırmadan önce panoyu tarayıcıda açık
 tut — rozetler sayfa yenilemeden anında belirir.
@@ -54,3 +64,8 @@ projede olmalı, projede en az 2 kart bulunmalı).
 > **Dikkat:** `npm run dev` watch modunda çalışmaz. `src/server/socket.ts`'i
 > değiştirdiysen sunucuyu yeniden başlatmadan test etme — eski kod bellekte
 > kalır ve `presence:file` eventi sessizce yok sayılır.
+
+> **Dikkat:** Aynı anda **tek bir backend** çalıştır. Veritabanı takımca
+> paylaşılan bir Supabase pooler'ı ve session limiti 15 bağlantı; ikinci bir
+> instance açmak havuzu tüketip `EMAXCONNSESSION` ile herkesin sorgularını
+> düşürür. Test için ikinci sunucu açmak yerine mevcut olanı yeniden başlat.

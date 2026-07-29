@@ -104,6 +104,11 @@ function connectSocket(token, label) {
       console.log(`\n[!] [${label}] conflict:detected alindi:`);
       console.log(JSON.stringify(payload, null, 2));
     });
+
+    socket.on('conflict:resolved', (payload) => {
+      console.log(`\n[ok] [${label}] conflict:resolved alindi:`);
+      console.log(JSON.stringify(payload, null, 2));
+    });
   });
 }
 
@@ -143,7 +148,15 @@ async function main() {
 
   await sleep(2500);
 
-  console.log('\nTest bitti. Yukarida "conflict:detected alindi" bloklari gorunmuyorsa cakisma tetiklenmedi demektir.');
+  console.log(`\n6) B baska bir dosyaya geciyor -> cakisma cozulmeli (conflict:resolved beklenir)\n`);
+  socketB.emit('presence:file', { cardId: cardB.id, filePath: 'src/lib/prisma.ts' });
+
+  await sleep(2500);
+
+  console.log('\n--- Ozet ---');
+  console.log('Beklenen: 5. adimdan sonra iki tarafta da "conflict:detected",');
+  console.log('6. adimdan sonra iki tarafta da "conflict:resolved" bloklari.');
+  console.log('Gorunmuyorsa: backend degisiklikten sonra yeniden baslatildi mi?');
   socketA.disconnect();
   socketB.disconnect();
   process.exit(0);

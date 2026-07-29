@@ -73,6 +73,7 @@ export interface ServerSocketEvents {
 
   // Git Cakisma Erken Uyari (VSCode extension presence sinyalinden turetilir)
   [SocketEvents.CONFLICT_DETECTED]: (data: ConflictPayload) => void;
+  [SocketEvents.CONFLICT_RESOLVED]: (data: ConflictResolvedPayload) => void;
 
   // Presence
   [SocketEvents.USER_ONLINE]: (userId: string) => void;
@@ -145,6 +146,7 @@ export enum SocketEvents {
 
   // Git Cakisma Erken Uyari
   CONFLICT_DETECTED = "conflict:detected",
+  CONFLICT_RESOLVED = "conflict:resolved",
 
   // Presence
   USER_ONLINE = "presence:online",
@@ -333,6 +335,14 @@ export interface ConflictPayload {
   userB: ConflictUserRef;
 }
 
+// Taraflardan biri dosyadan ayrilinca / baglantisi kopunca / kaydi bayatlayinca
+// yayilir. cardIds cakisan iki kartin id'sidir; filePath ile birlikte gelir ki
+// istemci ayni kartin BASKA bir dosyadaki aktif uyarisini yanlislikla silmesin.
+export interface ConflictResolvedPayload {
+  filePath: string;
+  cardIds: [string, string];
+}
+
 // Socket with user info
 export interface AuthenticatedSocket extends Socket {
   userId?: string;
@@ -418,21 +428,87 @@ async function getAccessibleCard(userId: string, cardId: string): Promise<Confli
 // Tek Node process oldugu icin (globalThis.__io ile ayni gerekce) Redis/DB
 // gerekmiyor: sadece process bellegindeki bir Map yeterli. Kalici veri degil,
 // VSCode'daki onSave/aktif-editor sinyallerinden turetilen anlik bir goruntu.
-//
+
+type PresenceEntry = {
+  cardId: string;
+  cardTitle: string;
+  userName: string;
+  projectId: string;
+  socketId: string;
+  lastSeenAt: number;
+};
+
+// Bu suredir yeni sinyal gelmemis kayit "bayat" sayilir ve cakisma hesabina
+// katilmaz. Aksi halde VSCode'u acik birakip giden birinin kaydi sonsuza
+// kadar durur ve ertesi gun ayni dosyaya dokunan herkese yanlis alarm basar.
+// Yanlis alarm bu ozelligin en buyuk dusmani: birikince rozet ciddiye alinmaz.
+const PRESENCE_TTL_MS = 15 * 60 * 1000; // 15 dakika
+const PRESENCE_SWEEP_MS = 5 * 60 * 1000; // bayat kayit taramasi araligi
+
 // filePath -> userId -> o an o dosyada hangi kartla calistigi
-const presenceByFile = new Map<string, Map<string, { cardId: string; cardTitle: string; userName: string; projectId: string }>>();
+const presenceByFile = new Map<string, Map<string, PresenceEntry>>();
 // socket.id -> en son bildirilen dosya yolu (kullanici dosya degistirince eskisini temizlemek icin)
 const lastFileBySocket = new Map<string, string>();
 
+function isFresh(entry: PresenceEntry): boolean {
+  return Date.now() - entry.lastSeenAt < PRESENCE_TTL_MS;
+}
+
+// Bir kaydi haritalardan cikarir ve bu cikis yuzunden ortadan kalkan
+// cakismalar icin conflict:resolved yayinlar — boylece panodaki rozet
+// sayfa yenilenmeden kaybolur.
+function removePresence(filePath: string, userId: string) {
+  const users = presenceByFile.get(filePath);
+  if (!users) return;
+
+  const leaving = users.get(userId);
+  if (!leaving) return;
+
+  users.delete(userId);
+  lastFileBySocket.delete(leaving.socketId);
+  if (users.size === 0) presenceByFile.delete(filePath);
+
+  for (const [otherUserId, other] of users) {
+    if (otherUserId === userId) continue;
+    if (other.cardId === leaving.cardId) continue;
+    if (!isFresh(other)) continue;
+
+    const payload: ConflictResolvedPayload = {
+      filePath,
+      cardIds: [leaving.cardId, other.cardId],
+    };
+
+    broadcastToProject(leaving.projectId, SocketEvents.CONFLICT_RESOLVED, payload);
+    if (other.projectId !== leaving.projectId) {
+      broadcastToProject(other.projectId, SocketEvents.CONFLICT_RESOLVED, payload);
+    }
+  }
+}
+
 function clearPresence(socketId: string, userId: string) {
   const prevFile = lastFileBySocket.get(socketId);
-  if (!prevFile) return;
-  const users = presenceByFile.get(prevFile);
-  if (users) {
-    users.delete(userId);
-    if (users.size === 0) presenceByFile.delete(prevFile);
-  }
   lastFileBySocket.delete(socketId);
+  if (!prevFile) return;
+  removePresence(prevFile, userId);
+}
+
+// Bir dosyadaki bayat kayitlari atar. Map uzerinde iterasyon sirasinda silme
+// JS'te guvenli, ama removePresence dosya bosalinca presenceByFile'dan girdiyi
+// silebilecegi icin cagiran taraf haritayi SONRADAN yeniden almalidir.
+function pruneStaleOnFile(filePath: string) {
+  const users = presenceByFile.get(filePath);
+  if (!users) return;
+  for (const [userId, entry] of users) {
+    if (!isFresh(entry)) removePresence(filePath, userId);
+  }
+}
+
+function sweepStalePresence() {
+  for (const [filePath, users] of presenceByFile) {
+    for (const [userId, entry] of users) {
+      if (!isFresh(entry)) removePresence(filePath, userId);
+    }
+  }
 }
 
 export function initializeSocket(httpServer: HttpServer): SocketIOServer<ServerSocketEvents> {
@@ -552,6 +628,14 @@ export function initializeSocket(httpServer: HttpServer): SocketIOServer<ServerS
       clearPresence(socket.id, socket.userId);
 
       const filePath = data.filePath;
+
+      // Bayat kayitlari kendi girdimizi eklemeden ONCE at: hem yanlis alarmi
+      // onler hem de temizlik sirasinda cikan conflict:resolved yayinlarinin
+      // bizim yeni girdimizi hesaba katmasini engeller.
+      pruneStaleOnFile(filePath);
+
+      // pruneStaleOnFile dosyayi bosaltip haritadan silmis olabilir, bu yuzden
+      // referans temizlikten SONRA aliniyor.
       let usersOnFile = presenceByFile.get(filePath);
       if (!usersOnFile) {
         usersOnFile = new Map();
@@ -562,6 +646,8 @@ export function initializeSocket(httpServer: HttpServer): SocketIOServer<ServerS
         cardTitle: cardInfo.title,
         userName: socket.userName || "Bilinmeyen",
         projectId: cardInfo.projectId,
+        socketId: socket.id,
+        lastSeenAt: Date.now(),
       });
       lastFileBySocket.set(socket.id, filePath);
 
@@ -680,6 +766,12 @@ export function initializeSocket(httpServer: HttpServer): SocketIOServer<ServerS
       socket.leave(`card:${cardId}`);
     });
   });
+
+  // Bayat presence kayitlarini periyodik olarak at. Sadece presence:file
+  // geldiginde temizlemek yetmez: cakisan taraf VSCode'u acik birakip giderse
+  // yeni sinyal hic gelmez ve rozet panoda asili kalirdi.
+  // unref(): bu zamanlayici surecin kapanmasini geciktirmesin.
+  setInterval(sweepStalePresence, PRESENCE_SWEEP_MS).unref();
 
   console.log("[SOCKET] Socket.io sunucusu baslatildi");
   return io;
