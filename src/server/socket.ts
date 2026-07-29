@@ -517,8 +517,12 @@ export function initializeSocket(httpServer: HttpServer): SocketIOServer<ServerS
   const io = new SocketIOServer<ServerSocketEvents>(httpServer, {
     cors: {
       origin: process.env.FRONTEND_URL
-        ? process.env.FRONTEND_URL.split(",").map((origin) => origin.trim()).filter(Boolean)
-        : "http://localhost:3000",
+        ? [
+            ...process.env.FRONTEND_URL.split(",").map((origin) => origin.trim()).filter(Boolean),
+            "http://localhost:3000",
+            "http://localhost:3001",
+          ]
+        : ["http://localhost:3000", "http://localhost:3001"],
       methods: ["GET", "POST"],
       credentials: true,
     },
