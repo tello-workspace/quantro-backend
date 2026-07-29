@@ -52,7 +52,7 @@ export type AuthResult = {
 };
 
 export type RegisterResult = {
-  verificationRequired: true;
+  verificationRequired: boolean;
   email: string;
 };
 
@@ -75,12 +75,14 @@ export async function register(input: RegisterInput): Promise<RegisterResult> {
       name: input.name,
       email: input.email,
       passwordHash,
+      emailVerifiedAt: new Date(), // Otomatik doğrulanmış
     },
   });
 
-  await issueVerificationEmail(user.id, user.email);
+  // Email doğrulama maili gönderilmez - kullanıcı anında doğrulanmış sayılır
+  // await issueVerificationEmail(user.id, user.email); // İptal edildi
 
-  return { verificationRequired: true, email: user.email };
+  return { verificationRequired: false, email: user.email };
 }
 
 export async function login(input: LoginInput): Promise<AuthResult> {

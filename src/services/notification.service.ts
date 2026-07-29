@@ -21,7 +21,18 @@ export async function createNotification(input: CreateNotificationInput) {
       invitationId: input.invitationId,
     },
     include: {
-      card: { select: { id: true, title: true } },
+      card: {
+        select: {
+          id: true,
+          title: true,
+          column: {
+            select: {
+              projectId: true,
+              project: { select: { organizationId: true } },
+            },
+          },
+        },
+      },
       invitation: { select: { id: true, status: true } },
     },
   });
@@ -47,7 +58,18 @@ export async function getNotifications(userId: string, unreadOnly?: boolean) {
     // card ve invitation iliskileri ayri sorgular yerine tek SQL'de gelsin
     relationLoadStrategy: "join",
     include: {
-      card: { select: { id: true, title: true } },
+      card: {
+        select: {
+          id: true,
+          title: true,
+          column: {
+            select: {
+              projectId: true,
+              project: { select: { organizationId: true } },
+            },
+          },
+        },
+      },
       invitation: { select: { id: true, status: true } },
     },
   });
