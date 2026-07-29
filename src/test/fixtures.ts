@@ -12,8 +12,13 @@ export function uniq(prefix: string): string {
 
 export async function createUser(name = "Test User") {
   const passwordHash = await bcrypt.hash("test1234", 4);
+  // emailVerifiedAt varsayilan olarak doldurulur: bu fixture "zaten var olan,
+  // onboard edilmis" bir kullaniciyi temsil ediyor - kayit/dogrulama akisinin
+  // kendisini test eden email-verification.test.ts disindaki tum testler
+  // (permissions, search, attachments vb.) login/yetki davranisini test
+  // ederken dogrulama adimiyla ugrasmak istemiyor.
   return prisma.user.create({
-    data: { name, email: `${uniq("user")}@example.com`, passwordHash },
+    data: { name, email: `${uniq("user")}@example.com`, passwordHash, emailVerifiedAt: new Date() },
   });
 }
 

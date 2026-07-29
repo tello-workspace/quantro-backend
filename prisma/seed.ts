@@ -34,18 +34,20 @@ async function main() {
 
   const passwordHash = await bcrypt.hash("demo1234", SALT_ROUNDS);
 
+  // Demo kullanicilari dogrulanmis olusturuluyor - aksi halde login/AI test
+  // scriptleri email dogrulama akisina takilir.
   const admin = await prisma.user.create({
-    data: { name: "Ayşe Yılmaz", email: "admin@tello.demo", passwordHash },
+    data: { name: "Ayşe Yılmaz", email: "admin@tello.demo", passwordHash, emailVerifiedAt: now() },
   });
   const mehmet = await prisma.user.create({
-    data: { name: "Mehmet Kaya", email: "mehmet@tello.demo", passwordHash },
+    data: { name: "Mehmet Kaya", email: "mehmet@tello.demo", passwordHash, emailVerifiedAt: now() },
   });
   const zeynep = await prisma.user.create({
-    data: { name: "Zeynep Demir", email: "zeynep@tello.demo", passwordHash },
+    data: { name: "Zeynep Demir", email: "zeynep@tello.demo", passwordHash, emailVerifiedAt: now() },
   });
   // Henuz organizasyona katilmamis - bekleyen davet akisini gostermek icin
   const can = await prisma.user.create({
-    data: { name: "Can Öztürk", email: "can@tello.demo", passwordHash },
+    data: { name: "Can Öztürk", email: "can@tello.demo", passwordHash, emailVerifiedAt: now() },
   });
 
   const org = await prisma.organization.create({

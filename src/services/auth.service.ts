@@ -2,21 +2,44 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
 import { signToken } from "@/utils/jwt";
-import { ConflictError, UnauthorizedError } from "@/utils/errors";
-import { sendPasswordResetEmail } from "@/utils/email";
+import { AppError, ConflictError, UnauthorizedError, ValidationError } from "@/utils/errors";
+import { sendPasswordResetEmail, sendVerificationEmail, hasValidMxRecord } from "@/utils/email";
 import type {
   RegisterInput,
   LoginInput,
   ForgotPasswordInput,
   ResetPasswordInput,
+  VerifyEmailInput,
+  ResendVerificationInput,
   UpdateProfileInput,
 } from "@/schemas/auth.schema";
 
 const SALT_ROUNDS = 10;
 const RESET_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 saat
+const VERIFICATION_TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 saat - onboarding akisi, reset'ten daha uzun
 
 function hashToken(token: string): string {
   return crypto.createHash("sha256").update(token).digest("hex");
+}
+
+function getFrontendUrl(): string {
+  return process.env.FRONTEND_URL?.split(",")[0]?.trim() || "http://localhost:3000";
+}
+
+async function issueVerificationEmail(userId: string, email: string): Promise<void> {
+  const rawToken = crypto.randomBytes(32).toString("hex");
+  const tokenHash = hashToken(rawToken);
+
+  await prisma.emailVerificationToken.create({
+    data: {
+      userId,
+      tokenHash,
+      expiresAt: new Date(Date.now() + VERIFICATION_TOKEN_TTL_MS),
+    },
+  });
+
+  const verifyUrl = `${getFrontendUrl()}/verify-email?token=${rawToken}`;
+  await sendVerificationEmail(email, verifyUrl);
 }
 
 export type AuthResult = {
@@ -28,11 +51,21 @@ export type AuthResult = {
   };
 };
 
-export async function register(input: RegisterInput): Promise<AuthResult> {
+export type RegisterResult = {
+  verificationRequired: true;
+  email: string;
+};
+
+export async function register(input: RegisterInput): Promise<RegisterResult> {
   const existing = await prisma.user.findUnique({ where: { email: input.email } });
 
   if (existing) {
     throw new ConflictError("Bu email adresi zaten kayıtlı");
+  }
+
+  const domainValid = await hasValidMxRecord(input.email);
+  if (!domainValid) {
+    throw new ValidationError("Bu email adresine ulaşılamıyor, geçerli bir email adresi girin");
   }
 
   const passwordHash = await bcrypt.hash(input.password, SALT_ROUNDS);
@@ -45,12 +78,9 @@ export async function register(input: RegisterInput): Promise<AuthResult> {
     },
   });
 
-  const token = signToken({ userId: user.id, email: user.email });
+  await issueVerificationEmail(user.id, user.email);
 
-  return {
-    token,
-    user: { id: user.id, name: user.name, email: user.email },
-  };
+  return { verificationRequired: true, email: user.email };
 }
 
 export async function login(input: LoginInput): Promise<AuthResult> {
@@ -64,6 +94,10 @@ export async function login(input: LoginInput): Promise<AuthResult> {
 
   if (!isValid) {
     throw new UnauthorizedError("Email veya şifre hatalı");
+  }
+
+  if (!user.emailVerifiedAt) {
+    throw new AppError(403, "Email adresiniz henüz doğrulanmadı. Lütfen gelen kutunuzu kontrol edin.", "EMAIL_NOT_VERIFIED");
   }
 
   const token = signToken({ userId: user.id, email: user.email });
@@ -84,8 +118,16 @@ export async function oauthLogin(email: string, name: string): Promise<AuthResul
     const randomPassword = crypto.randomBytes(32).toString("hex");
     const passwordHash = await bcrypt.hash(randomPassword, SALT_ROUNDS);
 
+    // OAuth saglayicisi email'i zaten dogruladigi icin dogrudan verified.
     user = await prisma.user.create({
-      data: { name, email, passwordHash },
+      data: { name, email, passwordHash, emailVerifiedAt: new Date() },
+    });
+  } else if (!user.emailVerifiedAt) {
+    // Daha once normal kayitla dogrulanmadan birakilmis bir hesap Google ile
+    // giris yapiyorsa, artik dogrulandigi icin arada sikismasin.
+    user = await prisma.user.update({
+      where: { id: user.id },
+      data: { emailVerifiedAt: new Date() },
     });
   }
 
@@ -95,6 +137,40 @@ export async function oauthLogin(email: string, name: string): Promise<AuthResul
     token,
     user: { id: user.id, name: user.name, email: user.email },
   };
+}
+
+// Token'i dogrular, kullaniciyi verified isaretler ve TUM bekleyen dogrulama
+// linklerini kullanildi olarak isaretler (biri sizmis olabilir - reset akisiyla ayni mantik).
+export async function verifyEmail(input: VerifyEmailInput): Promise<void> {
+  const tokenHash = hashToken(input.token);
+
+  const verificationToken = await prisma.emailVerificationToken.findUnique({
+    where: { tokenHash },
+  });
+
+  if (!verificationToken || verificationToken.usedAt || verificationToken.expiresAt < new Date()) {
+    throw new UnauthorizedError("Token geçersiz veya süresi dolmuş");
+  }
+
+  await prisma.$transaction([
+    prisma.user.update({
+      where: { id: verificationToken.userId },
+      data: { emailVerifiedAt: new Date() },
+    }),
+    prisma.emailVerificationToken.updateMany({
+      where: { userId: verificationToken.userId, usedAt: null },
+      data: { usedAt: new Date() },
+    }),
+  ]);
+}
+
+// Kullanicinin var olup olmadigini veya zaten dogrulanmis oldugunu disariya
+// sizdirmamak icin her zaman ayni (basarili) yaniti dondurur - reset akisiyla ayni desen.
+export async function resendVerification(input: ResendVerificationInput): Promise<void> {
+  const user = await prisma.user.findUnique({ where: { email: input.email } });
+  if (!user || user.emailVerifiedAt) return;
+
+  await issueVerificationEmail(user.id, user.email);
 }
 
 // Kullanicinin var olup olmadigini disariya sizdirmamak icin her zaman ayni

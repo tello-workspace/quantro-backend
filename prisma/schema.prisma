@@ -81,11 +81,14 @@ enum InvitationStatus {
 // ---------- MODELS ----------
 
 model User {
-  id           String   @id @default(cuid())
+  id           String    @id @default(cuid())
   name         String
-  email        String   @unique
+  email        String    @unique
   passwordHash String
-  createdAt    DateTime @default(now())
+  createdAt    DateTime  @default(now())
+  // null = email dogrulanmamis, giris engellenir. Google/Apple gibi OAuth
+  // saglayicilar email'i kendisi dogruladigi icin oauthLogin'de otomatik set edilir.
+  emailVerifiedAt DateTime?
 
   // Profil bilgileri: kullanici kendi doldurur. AI, gorev atarken (chat'teki
   // otomatik atama ve "AI ile Doldur") bu alanlari Badge'lerle birlikte
@@ -98,7 +101,8 @@ model User {
   expertiseAreas  String[] @default([])
   languages       String[] @default([])
 
-  passwordResetTokens PasswordResetToken[]
+  passwordResetTokens      PasswordResetToken[]
+  emailVerificationTokens  EmailVerificationToken[]
 
   ownedOrganizations      Organization[]           @relation("OrganizationOwner")
   organizationMemberships OrganizationMember[]
@@ -382,6 +386,22 @@ model CardDependency {
 // tutulur (linki gorenin/DB'yi dump edenin token'i kullanabilmesini onler).
 // 1 saat sonra veya kullanildiktan sonra gecersiz sayilir.
 model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// Email dogrulama linki: PasswordResetToken ile ayni desen (ham token
+// e-postayla gider, DB'de sadece hash'i tutulur). 24 saat gecerli —
+// onboarding akisi oldugu icin sifre sifirlamadan (1 saat) daha uzun.
+model EmailVerificationToken {
   id        String    @id @default(cuid())
   userId    String
   tokenHash String    @unique

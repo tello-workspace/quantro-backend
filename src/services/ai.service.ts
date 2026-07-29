@@ -508,13 +508,46 @@ function toGeminiContents(messages: (ChatMessage | ToolMessage)[]): {
   return { contents, systemInstruction };
 }
 
-async function callGeminiRaw(
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Gemini'nin 429 govdesindeki RetryInfo.retryDelay ("20s" gibi) alanini
+// okur. Bulunamaz/parse edilemezse null doner, cagiran taraf varsayilan
+// bir sure kullanir. 10sn ile sinirlanir - kendi istek zaman asimlarimizi
+// (15-35sn) anlamsizca doldurmasin.
+function parseRetryDelayMs(errorBody: string): number | null {
+  try {
+    const parsed = JSON.parse(errorBody);
+    const details = parsed?.error?.details;
+    if (Array.isArray(details)) {
+      for (const detail of details) {
+        const match = /^(\d+(?:\.\d+)?)s$/.exec(detail?.retryDelay ?? "");
+        if (match) return Math.min(Math.ceil(parseFloat(match[1]) * 1000), 10_000);
+      }
+    }
+  } catch {
+    // JSON degilse veya beklenen sekilde degilse yoksay
+  }
+  return null;
+}
+
+interface GeminiCallResult {
+  parts: GeminiPart[];
+  error?: string;
+  // 429 oldugu ve gercek kota tukenmesi (limit: 0) DEGIL, gecici bir hiz
+  // siniri oldugu durumda true olur - cagiran taraf bir kez yeniden dener.
+  retryable?: boolean;
+  retryDelayMs?: number;
+}
+
+async function callGeminiOnce(
   provider: AIProvider,
   contents: GeminiContent[],
   systemInstruction: string,
   withTools: boolean,
   signal?: AbortSignal,
-): Promise<{ parts: GeminiPart[]; error?: string }> {
+): Promise<GeminiCallResult> {
   const body: Record<string, unknown> = { contents };
   if (systemInstruction) {
     body.system_instruction = { parts: [{ text: systemInstruction }] };
@@ -545,13 +578,21 @@ async function callGeminiRaw(
       };
     if (response.status === 429) {
       // limit: 0 → o modelde hic ucretsiz kota yok (surum kapatilmis olabilir);
-      // diger 429'lar gercek hiz siniri, beklemek yeterli.
+      // diger 429'lar Google'in dakikalik/gunluk hiz siniri - gecici, retry ile atlatilabilir.
       const noQuota = errorBody.includes("limit: 0");
+      if (noQuota) {
+        return {
+          parts: [],
+          error: `⚠️ Bu API anahtarının "${provider.model}" modelinde kotası yok. .env içinde AI_MODEL="gemini-flash-latest" deneyin veya faturalandırmayı açın.`,
+        };
+      }
       return {
         parts: [],
-        error: noQuota
-          ? `⚠️ Bu API anahtarının "${provider.model}" modelinde kotası yok. .env içinde AI_MODEL="gemini-flash-latest" deneyin veya faturalandırmayı açın.`
-          : "⚠️ İstek sınırına takıldınız. Lütfen birkaç saniye sonra tekrar deneyin.",
+        // NOT: Bu Tello'nun kendi kullanim limiti DEGIL, Google Gemini'nin
+        // ucretsiz katman hiz siniri - checkAiRateLimit ile karistirilmasin.
+        error: "⚠️ Google Gemini'nin ücretsiz kullanım sınırına takıldık. Lütfen birkaç saniye sonra tekrar deneyin.",
+        retryable: true,
+        retryDelayMs: parseRetryDelayMs(errorBody) ?? undefined,
       };
     }
     return {
@@ -563,6 +604,23 @@ async function callGeminiRaw(
   const data = await response.json();
   const parts: GeminiPart[] = data.candidates?.[0]?.content?.parts ?? [];
   return { parts };
+}
+
+async function callGeminiRaw(
+  provider: AIProvider,
+  contents: GeminiContent[],
+  systemInstruction: string,
+  withTools: boolean,
+  signal?: AbortSignal,
+): Promise<{ parts: GeminiPart[]; error?: string }> {
+  const first = await callGeminiOnce(provider, contents, systemInstruction, withTools, signal);
+  if (!first.retryable) return first;
+
+  const delay = first.retryDelayMs ?? 2000;
+  console.warn(`[AI] Gemini 429 (gecici hiz siniri) - ${delay}ms sonra tek seferlik yeniden deneniyor`);
+  await sleep(delay);
+
+  return callGeminiOnce(provider, contents, systemInstruction, withTools, signal);
 }
 
 // Gemini ile cok turlu tool dongusu: model fonksiyon cagirir, sonucu

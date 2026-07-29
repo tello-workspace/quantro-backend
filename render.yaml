@@ -1,0 +1,41 @@
+# Render Blueprint — Dashboard'da "New +" -> "Blueprint" ile bu repo'yu
+# secince otomatik olusturulur. sync:false olan degiskenler Render panelinde
+# elle girilir (secret oldugu icin repoya yazilmaz).
+#
+# Bu servis Socket.IO icin ozel bir Node process'i (server.ts) ayakta tutuyor.
+# Vercel gibi serverless ortamlar WebSocket baglantisini canli tutamadigi icin
+# (bkz. src/server/socket.ts icindeki "xhr poll error" notu) Render'in klasik
+# Web Service'i (surekli calisan process) burada dogru secim.
+services:
+  - type: web
+    name: tello-backend
+    runtime: node
+    plan: starter
+    region: frankfurt
+    buildCommand: npm install && npx prisma generate && npm run build
+    startCommand: npm run start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Render PORT'u kendisi enjekte eder, server.ts zaten
+      # process.env.PORT'u okuyor — burada elle set etme.
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: AI_PROVIDER
+        value: google-gemini
+      - key: AI_API_KEY
+        sync: false
+      - key: AI_MODEL
+        value: gemini-flash-latest
+      # Deploy sonrasi frontend'in gercek Render URL'iyle guncellenmeli —
+      # CORS ve Socket.IO handshake bu deger uzerinden dogrulaniyor.
+      - key: FRONTEND_URL
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: RESEND_FROM_EMAIL
+        value: "Tello <onboarding@resend.dev>"
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
