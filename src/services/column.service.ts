@@ -127,7 +127,10 @@ export async function deleteColumn(columnId: string, userId: string) {
 }
 
 export async function reorderColumns(projectId: string, columnIds: string[], userId: string) {
-  await checkProjectAccess(projectId, userId);
+  const { role } = await checkProjectAccess(projectId, userId);
+  if (role !== "ADMIN") {
+    throw new ForbiddenError("Sütunları sadece adminler yeniden sıralayabilir.");
+  }
 
   // Batch update: gelen sıraya göre position'ları 0, 1, 2... yap
   const updates = columnIds.map((id, index) =>
