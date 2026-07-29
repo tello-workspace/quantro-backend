@@ -399,13 +399,22 @@ function parseDSML(content: string): ToolCall[] | undefined {
 
 // ─── API Call ───────────────────────────────────────────────────────
 
-async function callOpenAI(
+interface OpenAICallResult {
+  content: string;
+  tool_calls?: ToolCall[];
+  // 429 oldugu ve Groq/OpenAI "retry-after" header'i verdigi durumda true olur -
+  // cagiran taraf bir kez yeniden dener. Gemini tarafindaki ayni desenin esi.
+  retryable?: boolean;
+  retryDelayMs?: number;
+}
+
+async function callOpenAIOnce(
   provider: AIProvider,
   messages: (ChatMessage | ToolMessage)[],
   tools?: typeof TOOLS,
   signal?: AbortSignal,
   responseFormat?: { type: "json_object" },
-): Promise<{ content: string; tool_calls?: ToolCall[] }> {
+): Promise<OpenAICallResult> {
   const body: Record<string, unknown> = {
     model: provider.model,
     messages,
@@ -437,8 +446,19 @@ async function callOpenAI(
     console.error("[AI] OpenAI API hatası:", response.status, errorBody);
     if (response.status === 401)
       return { content: "⚠️ API anahtarı geçersiz. Lütfen yöneticinizle iletişime geçin." };
-    if (response.status === 429)
-      return { content: "⚠️ Çok fazla istek gönderildi. Lütfen biraz bekleyip tekrar deneyin." };
+    if (response.status === 429) {
+      // Groq/OpenAI "retry-after" header'i saniye cinsinden gelir (bkz.
+      // console.groq.com/docs/rate-limits). Bu Tello'nun kendi limiti degil,
+      // saglayicinin (Groq/OpenAI) dakikalik token/istek kotasi - checkAiRateLimit
+      // ile karistirilmasin.
+      const retryAfterHeader = response.headers.get("retry-after");
+      const retryAfterSec = retryAfterHeader ? parseFloat(retryAfterHeader) : NaN;
+      return {
+        content: "⚠️ AI sağlayıcısının (Groq) hız sınırına takıldık. Lütfen birkaç saniye sonra tekrar deneyin.",
+        retryable: true,
+        retryDelayMs: !isNaN(retryAfterSec) ? Math.min(Math.ceil(retryAfterSec * 1000), 10_000) : undefined,
+      };
+    }
     return { content: `⚠️ AI servisi şu anda kullanılamıyor. (Hata: ${response.status})` };
   }
 
@@ -476,6 +496,23 @@ async function callOpenAI(
   }
 
   return { content, tool_calls: toolCalls };
+}
+
+async function callOpenAI(
+  provider: AIProvider,
+  messages: (ChatMessage | ToolMessage)[],
+  tools?: typeof TOOLS,
+  signal?: AbortSignal,
+  responseFormat?: { type: "json_object" },
+): Promise<{ content: string; tool_calls?: ToolCall[] }> {
+  const first = await callOpenAIOnce(provider, messages, tools, signal, responseFormat);
+  if (!first.retryable) return first;
+
+  const delay = first.retryDelayMs ?? 2000;
+  console.warn(`[AI] Groq/OpenAI 429 (gecici hiz siniri) - ${delay}ms sonra tek seferlik yeniden deneniyor`);
+  await sleep(delay);
+
+  return callOpenAIOnce(provider, messages, tools, signal, responseFormat);
 }
 
 // ─── Gemini (function calling ile) ─────────────────────────────────

@@ -27,20 +27,35 @@ describe("auth.service - email dogrulama", () => {
     userIds.length = 0;
   });
 
-  it("register dogrulama gerektiren bir sonuc doner, dogrulanmamis kullanici olusturur", async () => {
+  // Resend'in sandbox domaini (onboarding@resend.dev) sadece hesap sahibinin
+  // kendi dogrulanmis adresine gonderim yapabiliyordu - gercek kullanicilar
+  // dogrulama mailini hic alamiyor, kayit olduktan sonra sonsuza kadar giris
+  // yapamaz hale geliyordu. Bu yuzden register() artik otomatik dogruluyor,
+  // mail/token hic uretilmiyor (domain eklenip gercek dogrulama acilana kadar).
+  it("register otomatik dogrulanmis bir kullanici olusturur, mail/token uretmez", async () => {
     const email = `${uniq("verify")}@gmail.com`;
 
     const result = await authService.register({ name: "Test Kullanici", password: "test1234", email });
 
-    expect(result).toEqual({ verificationRequired: true, email });
+    expect(result).toEqual({ verificationRequired: false, email });
 
     const user = await prisma.user.findUniqueOrThrow({ where: { email } });
     userIds.push(user.id);
-    expect(user.emailVerifiedAt).toBeNull();
+    expect(user.emailVerifiedAt).not.toBeNull();
 
     const tokenRecord = await prisma.emailVerificationToken.findFirst({ where: { userId: user.id } });
-    expect(tokenRecord).not.toBeNull();
-    expect(tokenRecord!.usedAt).toBeNull();
+    expect(tokenRecord).toBeNull();
+  });
+
+  it("register sonrasi kullanici hemen login yapabilir (dogrulama beklemez)", async () => {
+    const email = `${uniq("instant-login")}@gmail.com`;
+    await authService.register({ name: "Test", password: "test1234", email });
+
+    const user = await prisma.user.findUniqueOrThrow({ where: { email } });
+    userIds.push(user.id);
+
+    const result = await authService.login({ email, password: "test1234" });
+    expect(result.token).toBeTruthy();
   });
 
   it("var olan email ile tekrar kayidi reddeder", async () => {
@@ -66,12 +81,17 @@ describe("auth.service - email dogrulama", () => {
     ).rejects.toThrow();
   });
 
-  it("dogrulanmamis kullanici login'de EMAIL_NOT_VERIFIED ile reddedilir", async () => {
+  // register() artik kimseyi dogrulanmamis birakmiyor, ama login()'deki
+  // savunma kontrolu hala kodda duruyor (domain eklenip dogrulama tekrar
+  // acilirsa diye). Bu durumu register()'i bypass edip elle kuruyoruz.
+  it("elle olusturulmus dogrulanmamis bir kullanici login'de EMAIL_NOT_VERIFIED ile reddedilir", async () => {
+    const bcrypt = await import("bcryptjs");
+    const passwordHash = await bcrypt.hash("test1234", 4);
     const email = `${uniq("unverified")}@gmail.com`;
-    const { verificationRequired } = await authService.register({ name: "Test", password: "test1234", email });
-    expect(verificationRequired).toBe(true);
 
-    const user = await prisma.user.findUniqueOrThrow({ where: { email } });
+    const user = await prisma.user.create({
+      data: { name: "Test", email, passwordHash, emailVerifiedAt: null },
+    });
     userIds.push(user.id);
 
     await expect(authService.login({ email, password: "test1234" })).rejects.toMatchObject({
@@ -80,21 +100,23 @@ describe("auth.service - email dogrulama", () => {
     });
   });
 
-  it("token ile dogrulanan kullanici artik login yapabilir", async () => {
+  it("token ile dogrulanan (elle olusturulmus dogrulanmamis) kullanici artik login yapabilir", async () => {
+    const bcrypt = await import("bcryptjs");
+    const passwordHash = await bcrypt.hash("test1234", 4);
     const email = `${uniq("toverify")}@gmail.com`;
-    await authService.register({ name: "Test", password: "test1234", email });
 
-    const user = await prisma.user.findUniqueOrThrow({ where: { email } });
+    const user = await prisma.user.create({
+      data: { name: "Test", email, passwordHash, emailVerifiedAt: null },
+    });
     userIds.push(user.id);
 
-    const stored = await prisma.emailVerificationToken.findFirstOrThrow({ where: { userId: user.id } });
-
-    // Servis ham token'i disari vermiyor (e-postayla gidiyor) - reset akisindaki
-    // ayni yontemle token'i biz uretip hash'ini DB'ye yaziyoruz.
     const rawToken = "test-raw-token-" + crypto.randomBytes(8).toString("hex");
-    await prisma.emailVerificationToken.update({
-      where: { id: stored.id },
-      data: { tokenHash: hashToken(rawToken) },
+    const stored = await prisma.emailVerificationToken.create({
+      data: {
+        userId: user.id,
+        tokenHash: hashToken(rawToken),
+        expiresAt: new Date(Date.now() + 60_000),
+      },
     });
 
     await authService.verifyEmail({ token: rawToken });
