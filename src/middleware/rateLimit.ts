@@ -71,7 +71,7 @@ const AI_LIMITS: Record<string, number> = {
 
 const AI_DEFAULT_LIMIT = 20;
 
-// Mesaj bilerek "Tello AI kullanım sınırı" diyor: ai.service.ts icindeki
+// Mesaj bilerek "Quantro AI kullanım sınırı" diyor: ai.service.ts icindeki
 // Gemini'nin kendi 429 mesajiyla ("Google Gemini'nin ücretsiz kullanım
 // sınırına takıldık...") karistirilmasin - biri bizim limitimiz, digeri
 // Google'in kotasi, ikisi farkli sorunlar.
@@ -80,6 +80,6 @@ export function checkAiRateLimit(userId: string, key: keyof typeof AI_LIMITS | s
     `${key}:user:${userId}`,
     WINDOW_MS,
     AI_LIMITS[key] ?? AI_DEFAULT_LIMIT,
-    (dk) => `Tello AI kullanım sınırına ulaştınız. ${dk} dakika sonra tekrar deneyin.`,
+    (dk) => `Quantro AI kullanım sınırına ulaştınız. ${dk} dakika sonra tekrar deneyin.`,
   );
 }
