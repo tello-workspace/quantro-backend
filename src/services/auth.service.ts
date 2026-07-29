@@ -238,6 +238,10 @@ const PROFILE_SELECT = {
   linkedinUrl: true,
   expertiseAreas: true,
   languages: true,
+  aiProvider: true,
+  aiApiKey: true,
+  aiBaseUrl: true,
+  aiModel: true,
 } as const;
 
 export async function getMe(userId: string) {
@@ -264,6 +268,10 @@ export async function updateProfile(userId: string, input: UpdateProfileInput) {
       ...(input.linkedinUrl !== undefined && { linkedinUrl: input.linkedinUrl }),
       ...(input.expertiseAreas !== undefined && { expertiseAreas: input.expertiseAreas }),
       ...(input.languages !== undefined && { languages: input.languages }),
+      ...(input.aiProvider !== undefined && { aiProvider: input.aiProvider }),
+      ...(input.aiApiKey !== undefined && { aiApiKey: input.aiApiKey }),
+      ...(input.aiBaseUrl !== undefined && { aiBaseUrl: input.aiBaseUrl }),
+      ...(input.aiModel !== undefined && { aiModel: input.aiModel }),
     },
     select: PROFILE_SELECT,
   });

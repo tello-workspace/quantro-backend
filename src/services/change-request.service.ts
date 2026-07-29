@@ -135,7 +135,7 @@ export async function createRequest(
     await notificationService.createNotification({
       userId: admin.userId,
       type: "REQUEST_CREATED",
-      message: `${request.requestedBy.name}: ${aciklama(request.type, request.payload)}`,
+      message: `${request.requestedBy.name}: ${aciklama(request.type, request.payload)} [orgId:${scope.organizationId}]`,
     });
   }
 

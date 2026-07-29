@@ -37,7 +37,7 @@ export async function GET(request: NextRequest) {
       return errorResponse("Bu projeye erişim yetkiniz yok", 403, "FORBIDDEN");
     }
 
-    const insights = await aiService.generateProjectInsights(projectId);
+    const insights = await aiService.generateProjectInsights(projectId, user.id);
     return successResponse({ insights });
   } catch (error) {
     if (error instanceof AppError) {

@@ -101,6 +101,12 @@ model User {
   expertiseAreas  String[] @default([])
   languages       String[] @default([])
 
+  // User-specific AI configurations
+  aiProvider      String?
+  aiApiKey        String?
+  aiBaseUrl       String?
+  aiModel         String?
+
   passwordResetTokens      PasswordResetToken[]
   emailVerificationTokens  EmailVerificationToken[]
 

@@ -32,7 +32,28 @@ interface AIProvider {
   model: string;
 }
 
-function getProvider(): AIProvider {
+async function getProvider(userId?: string): Promise<AIProvider> {
+  if (userId) {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        aiProvider: true,
+        aiApiKey: true,
+        aiBaseUrl: true,
+        aiModel: true,
+      },
+    });
+
+    if (user && user.aiProvider && user.aiApiKey) {
+      return {
+        provider: user.aiProvider as AIProvider["provider"],
+        baseUrl: user.aiBaseUrl || (user.aiProvider === "google-gemini" ? "https://generativelanguage.googleapis.com/v1beta" : "https://api.openai.com/v1"),
+        apiKey: user.aiApiKey,
+        model: user.aiModel || (user.aiProvider === "google-gemini" ? "gemini-flash-latest" : "gpt-4o-mini"),
+      };
+    }
+  }
+
   const provider = (process.env.AI_PROVIDER || "openai") as AIProvider["provider"];
   const apiKey = process.env.AI_API_KEY || "";
 
@@ -41,8 +62,6 @@ function getProvider(): AIProvider {
       provider: "google-gemini",
       baseUrl: "https://generativelanguage.googleapis.com/v1beta",
       apiKey,
-      // Sabit surum yerine "latest" takma adi: gemini-1.5/2.0/2.5 gibi
-      // eski surumler yeni anahtarlara kapatiliyor (404 ya da kota 0).
       model: process.env.AI_MODEL || "gemini-flash-latest",
     };
   }
@@ -859,7 +878,7 @@ export async function sendMessage(
   userId: string,
   messages: ChatMessage[],
 ): Promise<string> {
-  const provider = getProvider();
+  const provider = await getProvider(userId);
 
   if (!provider.apiKey) {
     return "⚠️ AI asistanı yapılandırılmamış. Lütfen yöneticinizle iletişime geçin.\n\n(.env dosyasında AI_API_KEY ve AI_PROVIDER değişkenlerini ayarlayın.)";
@@ -959,8 +978,9 @@ export async function sendMessage(
 
 export async function generateProjectInsights(
   projectId: string,
+  userId?: string,
 ): Promise<string> {
-  const provider = getProvider();
+  const provider = await getProvider(userId);
   if (!provider.apiKey) return "";
 
   const boardContext = await getBoardContext(projectId);
@@ -1024,7 +1044,7 @@ export async function generateCardDetails(
   userId: string,
   title: string,
 ): Promise<{ description: string; priority: string; dueDate?: string; suggestedAssigneeId?: string }> {
-  const provider = getProvider();
+  const provider = await getProvider(userId);
 
   if (!provider.apiKey) {
     throw new AppError(400, "AI asistanı yapılandırılmamış.", "AI_UNCONFIGURED");
@@ -1268,7 +1288,7 @@ Format:
     { role: "user", content: prompt },
   ];
 
-  const provider = getProvider();
+  const provider = await getProvider(userId);
   console.log(`[AI PUSH ANALYZER] Seçilen AI Sağlayıcı: ${provider.provider} | Model: ${provider.model}`);
 
   const controller = new AbortController();
@@ -1425,4 +1445,61 @@ Format:
     }
 
   return { movedCards };
+}
+
+export async function testConfiguration(provider: {
+  provider: string;
+  apiKey: string;
+  baseUrl?: string | null;
+  model?: string | null;
+}): Promise<{ success: boolean; error?: string }> {
+  try {
+    const formattedProvider: AIProvider = {
+      provider: provider.provider as any,
+      apiKey: provider.apiKey,
+      baseUrl: provider.baseUrl || (provider.provider === "google-gemini" ? "https://generativelanguage.googleapis.com/v1beta" : "https://api.openai.com/v1"),
+      model: provider.model || (provider.provider === "google-gemini" ? "gemini-flash-latest" : "gpt-4o-mini"),
+    };
+
+    const messages: ChatMessage[] = [{ role: "user", content: "Hi" }];
+
+    if (formattedProvider.provider === "google-gemini") {
+      const { contents, systemInstruction } = toGeminiContents(messages);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000);
+      try {
+        const { error } = await callGeminiRaw(
+          formattedProvider,
+          contents,
+          systemInstruction,
+          false,
+          controller.signal,
+        );
+        clearTimeout(timeout);
+        if (error) {
+          return { success: false, error };
+        }
+        return { success: true };
+      } catch (err: any) {
+        clearTimeout(timeout);
+        return { success: false, error: err?.message || "Gemini connection error" };
+      }
+    } else {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000);
+      try {
+        const res = await callOpenAI(formattedProvider, messages, undefined, controller.signal);
+        clearTimeout(timeout);
+        if (res.content.startsWith("⚠️")) {
+          return { success: false, error: res.content };
+        }
+        return { success: true };
+      } catch (err: any) {
+        clearTimeout(timeout);
+        return { success: false, error: err?.message || "OpenAI connection error" };
+      }
+    }
+  } catch (error: any) {
+    return { success: false, error: error?.message || "Bilinmeyen hata" };
+  }
 }
