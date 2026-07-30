@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { NotFoundError, ForbiddenError } from "@/utils/errors";
 import * as notificationService from "@/services/notification.service";
+import { broadcastToProject, SocketEvents } from "@/server/socket";
 import type { AutomationRule, AutomationTrigger } from "@prisma/client";
 import type { CreateAutomationRuleInput, UpdateAutomationRuleInput } from "@/schemas/automation.schema";
 
@@ -116,9 +117,24 @@ async function executeAction(rule: AutomationRule, cardId: string) {
       if (!rule.actionColumnId) return;
       const column = await prisma.column.findUnique({ where: { id: rule.actionColumnId } });
       if (!column) return;
-      await prisma.card.update({
+
+      const before = await prisma.card.findUnique({ where: { id: cardId }, select: { columnId: true } });
+      if (!before || before.columnId === rule.actionColumnId) return;
+
+      const updated = await prisma.card.update({
         where: { id: cardId },
         data: { columnId: rule.actionColumnId, lastActivityAt: new Date() },
+      });
+
+      // Manuel tasima ile ayni event: bunu yayinlamazsak diger acik
+      // panolar (ve karti tasiyan otomasyonu tetikleyen kullanicinin
+      // KENDI panosu) kart yeni sutuna gecene kadar hicbir sey gormez.
+      broadcastToProject(rule.projectId, SocketEvents.CARD_MOVED, {
+        cardId: updated.id,
+        fromColumnId: before.columnId,
+        toColumnId: updated.columnId,
+        position: updated.position,
+        projectId: rule.projectId,
       });
       return;
     }
@@ -129,11 +145,41 @@ async function executeAction(rule: AutomationRule, cardId: string) {
         create: { cardId, userId: rule.actionUserId },
         update: {},
       });
-      const card = await prisma.card.findUnique({ where: { id: cardId }, select: { title: true } });
+
+      const card = await prisma.card.findUnique({
+        where: { id: cardId },
+        select: {
+          title: true,
+          description: true,
+          columnId: true,
+          priority: true,
+          dueDate: true,
+          position: true,
+          assignees: { include: { user: { select: { id: true, name: true } } } },
+        },
+      });
+      if (!card) return;
+
+      // Manuel atamayla ayni event (CARD_ASSIGNED yerine CARD_UPDATED - frontend'in
+      // zaten dinledigi onCardUpdated handler'i assignees'i ayni sekilde birlestiriyor).
+      // Bu olmadan otomasyonun atadigi kisi DB'de dogru ama acik panoda sayfa
+      // yenilenene kadar hic gorunmuyordu.
+      broadcastToProject(rule.projectId, SocketEvents.CARD_UPDATED, {
+        id: cardId,
+        title: card.title,
+        description: card.description,
+        columnId: card.columnId,
+        projectId: rule.projectId,
+        assignees: card.assignees.map((a) => ({ id: a.user.id, name: a.user.name })),
+        priority: card.priority,
+        dueDate: card.dueDate?.toISOString() ?? null,
+        position: card.position,
+      });
+
       await notificationService.createNotification({
         userId: rule.actionUserId,
         type: "AUTOMATION",
-        message: `"${rule.name}" kuralı seni "${card?.title}" kartına atadı`,
+        message: `"${rule.name}" kuralı seni "${card.title}" kartına atadı`,
         cardId,
       });
       return;

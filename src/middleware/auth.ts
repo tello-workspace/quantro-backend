@@ -42,23 +42,40 @@ export function invalidateUserCache(userId: string) {
 }
 
 export async function authenticate(request: NextRequest) {
+  const authHeader = request.headers.get("authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    return errorResponse("Token gerekli", 401, "UNAUTHORIZED");
+  }
+
+  const token = authHeader.slice(7);
+
+  // JWT dogrulamasi (imza/sure) SADECE burada basarisiz olursa gercekten
+  // "token gecersiz/suresi dolmus" demektir - 401 dogru.
+  let payload: ReturnType<typeof verifyToken>;
   try {
-    const authHeader = request.headers.get("authorization");
-    if (!authHeader?.startsWith("Bearer ")) {
-      return errorResponse("Token gerekli", 401, "UNAUTHORIZED");
-    }
-
-    const token = authHeader.slice(7);
-    const payload = verifyToken(token);
-
-    const user = await getUser(payload.userId);
-
-    if (!user) {
-      return errorResponse("Kullanıcı bulunamadı", 401, "UNAUTHORIZED");
-    }
-
-    (request as AuthenticatedRequest).user = user;
+    payload = verifyToken(token);
   } catch {
     return errorResponse("Token süresi dolmuş veya geçersiz", 401, "TOKEN_EXPIRED");
   }
+
+  // getUser (DB sorgusu) burada AYRI try/catch'te: paylasilan Supabase
+  // pooler'i gecici olarak dolduğunda (EMAXCONNSESSION) bu sorgu patlar ve
+  // eskiden yukaridaki ayni catch'e dusup 401 donuyordu - frontend'deki
+  // baseQueryWithLogout da HER 401'de kullaniciyi oturumdan atiyor. Yani
+  // gecici bir DB hatasi, tokeni gecerli bir kullaniciyi zorla logout
+  // ediyordu. Simdi bu durum 401 DEGIL 503 donuyor, frontend logout
+  // tetiklemiyor - kullanici bir sonraki istekte sessizce devam ediyor.
+  let user: CachedUser | null;
+  try {
+    user = await getUser(payload.userId);
+  } catch (error) {
+    console.error("[auth] Kullanıcı sorgusu başarısız (muhtemelen geçici DB hatası):", error);
+    return errorResponse("Kimlik doğrulama şu anda yapılamıyor, lütfen tekrar deneyin", 503, "AUTH_UNAVAILABLE");
+  }
+
+  if (!user) {
+    return errorResponse("Kullanıcı bulunamadı", 401, "UNAUTHORIZED");
+  }
+
+  (request as AuthenticatedRequest).user = user;
 }
