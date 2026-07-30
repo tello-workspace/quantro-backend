@@ -492,7 +492,10 @@ async function callOpenAIOnce(
 
   const choices = (data as any).choices;
   const msg = choices?.[0]?.message;
-  if (!msg) return { content: "⚠️ AI asistanı boş cevap döndü." };
+  if (!msg) {
+    const reason = choices?.[0]?.finish_reason || "bilinmiyor";
+    return { content: `⚠️ AI asistanı boş cevap döndü. (Sebep: ${reason}) — API anahtarının geçerli olduğundan ve model adının doğru yazıldığından emin olun.` };
+  }
 
   // Reasoning modellerde (UwU) content boş olur, reasoning_content'te yanıt vardır
   // Tool çağrısı varsa reasoning_content'i atla (düşünme metnidir)
@@ -729,7 +732,12 @@ async function runGeminiWithTools(
         .map((p) => p.text)
         .join("")
         .trim();
-      return text || "⚠️ AI asistanı boş cevap döndü.";
+      if (!text) {
+        // Gemini'den hiç text gelmemesi: model bulunamadı, içerik engellendi
+        const blockReason = (parts.length > 0 ? "content_filter" : "model_not_found");
+        return `⚠️ AI asistanı boş cevap döndü. (Sebep: ${blockReason}) — Model adını ve API anahtarını kontrol edin.`;
+      }
+      return text;
     }
 
     // Modelin fonksiyon cagrilarini gecmise ekle
@@ -970,7 +978,7 @@ export async function sendMessage(
   ];
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30000);
+  const timeout = setTimeout(() => controller.abort(), 60000);
 
   try {
     if (provider.provider === "google-gemini") {
@@ -985,15 +993,26 @@ export async function sendMessage(
     }
 
     // OpenAI-compatible (UwU dahil) — function calling ile çalışır
-    // OpenAI-compatible (UwU dahil) — function calling ile çalışır
     // Çok turlu tool döngüsü (Gemini ile paralel mantıkta)
     const chatMessages: (ChatMessage | ToolMessage)[] = [...apiMessages];
     const MAX_ROUNDS = 4;
 
+    // Boş/geçersiz cevap durumunda bir kez tekrar dene (OpenRouter transient hata)
+    let retried = false;
+    const callWithRetry = async (msgs: typeof chatMessages, tools?: typeof TOOLS) => {
+      const reply = await callOpenAI(provider, msgs, tools, controller.signal);
+      if (reply.content?.startsWith("⚠️") && !retried) {
+        retried = true;
+        console.warn("[AI] Ilk denemede hata, bir kez yeniden deneniyor...");
+        return callOpenAI(provider, [...apiMessages], tools, controller.signal);
+      }
+      return reply;
+    };
+
     for (let round = 0; round < MAX_ROUNDS; round++) {
       // Son turda tool göndermeyerek modeli düz metin cevap vermeye zorluyoruz
       const activeTools = round < MAX_ROUNDS - 1 ? TOOLS : undefined;
-      const reply = await callOpenAI(provider, chatMessages, activeTools, controller.signal);
+      const reply = await callWithRetry(chatMessages, activeTools);
 
       if (!reply.tool_calls?.length) {
         return reply.content || "✅ İşlem tamamlandı.";
@@ -1520,7 +1539,7 @@ export async function testConfiguration(provider: {
     if (formattedProvider.provider === "google-gemini") {
       const { contents, systemInstruction } = toGeminiContents(messages);
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 8000);
+      const timeout = setTimeout(() => controller.abort(), 20000);
       try {
         const { error } = await callGeminiRaw(
           formattedProvider,
@@ -1540,7 +1559,7 @@ export async function testConfiguration(provider: {
       }
     } else {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 8000);
+      const timeout = setTimeout(() => controller.abort(), 20000);
       try {
         const res = await callOpenAI(formattedProvider, messages, undefined, controller.signal);
         clearTimeout(timeout);
