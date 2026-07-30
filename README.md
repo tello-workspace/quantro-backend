@@ -15,6 +15,48 @@ npx prisma migrate dev --name init
 npm run dev
 ```
 
+## Lokal Veritabanı (Önerilen)
+
+Varsayılan `.env.example` paylaşılan uzak Supabase'e işaret etmez — kendi
+`docker-compose.yml`'ini kullanarak izole bir Postgres ayağa kaldırabilirsin:
+
+```bash
+docker compose up -d
+# .env'de DATABASE_URL="postgresql://postgres:devpass@localhost:5432/pmapp" olsun
+npx prisma migrate deploy
+npx prisma db seed
+```
+
+Bunu kullanınca aşağıdaki "tek instance" ve "havuz limiti" kısıtları geçerli
+değildir — kendi container'ın, kendi bağlantı limitin. Paylaşılan Supabase'e
+bağlanmak isteyen ekip üyeleri (gerçek OAuth/Resend/Supabase Storage
+entegrasyonlarını test etmek için) mevcut `DATABASE_URL`'i kullanmaya devam
+edebilir, o zaman aşağıdaki kısıtlar geçerli olur.
+
+## Ölçeklenme Kısıtları (Tek Instance Varsayımı)
+
+Bu backend şu anda **yatay ölçeklenecek şekilde tasarlanmadı** — aşağıdaki
+state'lerin hepsi process belleğinde (in-memory) tutuluyor, Redis/DB'ye
+yazılmıyor:
+
+- Rate limit sayaçları (`middleware/rateLimit.ts`)
+- Idempotency kayıtları (`middleware/idempotency.ts`)
+- Kullanıcı cache'i (`middleware/auth.ts`)
+- Git çakışması presence/conflict matrisi (`server/socket.ts`)
+
+Tek process çalıştığı sürece bunlar doğru çalışır. İkinci bir instance (örn.
+Render'da "scale to 2" veya paralel bir dev sunucusu) açılırsa: rate limit
+ikiye bölünmüş gibi davranır (bypass edilebilir), idempotency kontrolü
+instance'lar arası çalışmaz, ve conflict rozetlerinin yarısı hangi instance'a
+düştüğüne göre kaybolabilir — hiçbiri hata fırlatmaz, sessizce yanlış
+çalışır. Gerçek yatay ölçek gerekirse önce bu dördü Redis'e taşınmalı
+(Socket.IO için de `@socket.io/redis-adapter`).
+
+Ayrıca paylaşılan Supabase pooler'ı kullanırken (bkz. yukarıdaki lokal DB
+bölümü) **aynı anda tek bir backend** çalıştırma kuralı bundan bağımsız,
+ayrı bir kısıt — havuzun session-mode limiti 15 bağlantı, ikinci bir
+instance (test için bile) bunu tüketip tüm takımı etkiler.
+
 ## Git Çakışması Erken Uyarı
 
 Aynı dosyaya **farklı kartlar** üzerinden dokunan iki geliştirici tespit edilince,

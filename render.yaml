@@ -27,12 +27,19 @@ services:
         sync: false
       - key: CRON_SECRET
         sync: false
+      # 29 Tem 2026'da Groq'a gecildi (openai-uyumlu API, bkz.
+      # console.groq.com/docs/models) - bu blueprint dosyasi o zamandan beri
+      # eski google-gemini degerlerini gosteriyordu, gercek Render panelindeki
+      # deger zaten Groq'tu. Yeni bir servis Blueprint'ten olusturulursa
+      # dogru varsayilanla baslasin diye burada da guncellendi.
       - key: AI_PROVIDER
-        value: google-gemini
+        value: openai
       - key: AI_API_KEY
         sync: false
+      - key: AI_BASE_URL
+        value: https://api.groq.com/openai/v1
       - key: AI_MODEL
-        value: gemini-flash-latest
+        value: llama-3.3-70b-versatile
       # Deploy sonrasi frontend'in gercek Render URL'iyle guncellenmeli —
       # CORS ve Socket.IO handshake bu deger uzerinden dogrulaniyor.
       - key: FRONTEND_URL

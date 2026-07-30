@@ -24,14 +24,27 @@ jobs:
   test:
     runs-on: ubuntu-latest
     needs: typecheck-and-lint
-    # Testler gercek bir Postgres'e (Prisma) baglaniyor. Paylasilan takim
-    # DB'sini CI'dan kirletmemek icin ayri bir TEST_DATABASE_URL secret'i
-    # bekleniyor (ideal: Supabase branching ile izole bir test DB'si).
-    # Secret tanimli degilse bu job atlanir, tsc+lint gate yine de calisir.
-    if: ${{ vars.RUN_DB_TESTS == 'true' }}
+    # Testler artik CI'a ozel, tek seferlik bir Postgres container'ina
+    # baglaniyor - paylasilan takim DB'sine hic dokunulmuyor, secret
+    # gerekmiyor ve her PR'da gercekten calisiyor (onceden RUN_DB_TESTS
+    # repo variable'i 'true' degilse bu job tamamen atlaniyordu).
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: tello_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
-      DATABASE_URL: ${{ secrets.TEST_DATABASE_URL }}
-      JWT_SECRET: ${{ secrets.TEST_JWT_SECRET }}
+      DATABASE_URL: "postgresql://postgres:ci@localhost:5432/tello_ci"
+      JWT_SECRET: "ci-test-secret"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -40,4 +53,5 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx prisma generate
+      - run: npx prisma migrate deploy
       - run: npm test

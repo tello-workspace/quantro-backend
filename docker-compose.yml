@@ -1,0 +1,30 @@
+# Lokal gelistirme icin izole Postgres. Paylasilan uzak Supabase'e (bkz.
+# README > Git Cakismasi Erken Uyari altindaki "Dikkat" notlari) dokunmadan
+# calismak/test etmek icin: bu container'i ayaga kaldirip DATABASE_URL'i
+# .env.example'daki lokal degere (postgresql://postgres:devpass@localhost:5432/pmapp)
+# cevirmek yeterli.
+#
+# Kullanim:
+#   docker compose up -d
+#   npx prisma migrate deploy
+#   npx prisma db seed
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: devpass
+      POSTGRES_DB: pmapp
+    ports:
+      - "5432:5432"
+    volumes:
+      - tello-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  tello-postgres-data:

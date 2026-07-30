@@ -35,7 +35,15 @@ export async function getBoard(projectId: string, userId: string) {
       orderBy: { position: "asc" },
       relationLoadStrategy: "join",
       include: {
+        // Onceden hic limit yoktu - tek bir kolonda binlerce kart biriken bir
+        // proje (en cok "Done" kolonu, hic temizlenmediginde) tum kartlari
+        // tek istekte serialize etmeye calisirdi. Kart bazli gercek sayfalama
+        // (cursor + "daha fazla yukle" UI'i) board'un tek-seferde-yukle
+        // yapisini degistirmeyi gerektirir - bu, sinirsiz buyumeyi durduran
+        // savunma amacli bir tavan. Normal boyuttaki bir projede hicbir
+        // kolon bu sayiya yaklasmaz.
         cards: {
+          take: 500,
           orderBy: { position: "asc" },
           include: {
             assignees: { include: { user: { select: { id: true, name: true, badges: { include: { badge: { select: { id: true, name: true, color: true, icon: true } } } } } } } },
