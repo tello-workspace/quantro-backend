@@ -3,13 +3,14 @@ import { NotFoundError, ForbiddenError } from "@/utils/errors";
 import { logActivity } from "@/services/activity.service";
 import { broadcastToProject, SocketEvents } from "@/server/socket";
 import * as notificationService from "@/services/notification.service";
+import { notifyWatchers } from "@/services/watcher.service";
 import type { CreateCommentInput, UpdateCommentInput } from "@/schemas/comment.schema";
 
 // Kartın kolonuna → projesine → organizasyonuna erişim kontrolü
 async function checkCardAccess(cardId: string, userId: string) {
   const card = await prisma.card.findUnique({
     where: { id: cardId },
-    select: { column: { select: { projectId: true, project: { select: { organizationId: true } } } } },
+    select: { title: true, column: { select: { projectId: true, project: { select: { organizationId: true } } } } },
   });
   if (!card) throw new NotFoundError("Kart");
 
@@ -27,6 +28,7 @@ async function checkCardAccess(cardId: string, userId: string) {
     role: member.role,
     projectId: card.column.projectId,
     organizationId: card.column.project.organizationId,
+    cardTitle: card.title,
   };
 }
 
@@ -71,7 +73,7 @@ export async function getComments(cardId: string, userId: string) {
 }
 
 export async function createComment(cardId: string, input: CreateCommentInput, userId: string) {
-  const { projectId, organizationId } = await checkCardAccess(cardId, userId);
+  const { projectId, organizationId, cardTitle } = await checkCardAccess(cardId, userId);
 
   const comment = await prisma.comment.create({
     data: {
@@ -110,6 +112,8 @@ export async function createComment(cardId: string, input: CreateCommentInput, u
       cardId,
     });
   }
+
+  await notifyWatchers(cardId, userId, `${comment.author.name} izlediğin "${cardTitle}" kartına yorum yaptı`);
 
   return comment;
 }

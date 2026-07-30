@@ -4,6 +4,7 @@ import * as notificationService from "@/services/notification.service";
 import { notifyBlockerResolved } from "@/services/dependency.service";
 import { logActivity } from "@/services/activity.service";
 import * as automationService from "@/services/automation.service";
+import { notifyWatchers } from "@/services/watcher.service";
 import { broadcastToProject, SocketEvents } from "@/server/socket";
 import type { CreateCardInput, UpdateCardInput } from "@/schemas/card.schema";
 import type { Priority } from "@prisma/client";
@@ -305,6 +306,12 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
       cardId: updated.id,
       columnId: updated.columnId,
     });
+
+    await notifyWatchers(
+      updated.id,
+      userId,
+      `"${updated.title}" kartı "${oldColumnName}" sütunundan "${newColumnName}" sütununa taşındı`,
+    );
   }
 
   if (newlyAssignedIds.length > 0) {
