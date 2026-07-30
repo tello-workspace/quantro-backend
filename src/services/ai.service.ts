@@ -467,7 +467,7 @@ async function callOpenAIOnce(
       const retryAfterHeader = response.headers.get("retry-after");
       const retryAfterSec = retryAfterHeader ? parseFloat(retryAfterHeader) : NaN;
       return {
-        content: "⚠️ AI sağlayıcısının (Groq) hız sınırına takıldık. Lütfen birkaç saniye sonra tekrar deneyin.",
+        content: "⚠️ AI sağlayıcısı hız sınırına takıldı. Otomatik olarak tekrar deneniyor...",
         retryable: true,
         retryDelayMs: !isNaN(retryAfterSec) ? Math.min(Math.ceil(retryAfterSec * 1000), 10_000) : undefined,
       };
@@ -525,19 +525,27 @@ async function callOpenAI(
   signal?: AbortSignal,
   responseFormat?: { type: "json_object" },
 ): Promise<{ content: string; tool_calls?: ToolCall[]; rateLimited?: boolean }> {
-  const first = await callOpenAIOnce(provider, messages, tools, signal, responseFormat);
-  if (!first.retryable) return first;
+  const MAX_RETRIES = 3;
+  const DELAYS = [3000, 5000, 8000]; // her denemede artan bekleme
 
-  const delay = first.retryDelayMs ?? 2000;
-  console.warn(`[AI] Groq/OpenAI 429 (gecici hiz siniri) - ${delay}ms sonra tek seferlik yeniden deneniyor`);
-  await sleep(delay);
+  let lastResult: OpenAICallResult | null = null;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    const result = await callOpenAIOnce(provider, messages, tools, signal, responseFormat);
+    lastResult = result;
 
-  const second = await callOpenAIOnce(provider, messages, tools, signal, responseFormat);
-  // Ikinci deneme de 429 donduyse hala hiz sinirindeyiz - bunu isaretliyoruz
-  // ki disaridaki "bos/gecersiz cevapta tekrar dene" mantigi bunu GECIKMESIZ
-  // ucuncu bir istekle tekrar denemesin (hiz sinirini tekrar denemek yerine
-  // daha da kotulestirir, bkz. callWithRetry).
-  return { ...second, rateLimited: second.retryable };
+    if (!result.retryable) return result;
+
+    // Hala 429 - bir sonraki denemeyi dene
+    const delay = result.retryDelayMs ?? DELAYS[attempt - 1] ?? 5000;
+    console.warn(`[AI] Groq/OpenAI 429 (gecici hiz siniri) - ${delay}ms sonra tekrar deneniyor... (Deneme ${attempt}/${MAX_RETRIES})`);
+    await sleep(delay);
+  }
+
+  // Tum denemeler 429 dondu - kullaniciya net mesaj
+  return {
+    content: "⚠️ AI sağlayıcısının hız sınırına takıldık. 3 kez tekrar denendi ancak sunucu hala müsait değil. Lütfen birkaç dakika sonra tekrar deneyin.",
+    rateLimited: true,
+  };
 }
 
 // ─── Gemini (function calling ile) ─────────────────────────────────
@@ -671,7 +679,7 @@ async function callGeminiOnce(
         parts: [],
         // NOT: Bu Quantro'nun kendi kullanim limiti DEGIL, Google Gemini'nin
         // ucretsiz katman hiz siniri - checkAiRateLimit ile karistirilmasin.
-        error: "⚠️ Google Gemini'nin ücretsiz kullanım sınırına takıldık. Lütfen birkaç saniye sonra tekrar deneyin.",
+        error: "⚠️ Google Gemini hız sınırına takıldı. Otomatik olarak tekrar deneniyor...",
         retryable: true,
         retryDelayMs: parseRetryDelayMs(errorBody) ?? undefined,
       };
@@ -694,14 +702,25 @@ async function callGeminiRaw(
   withTools: boolean,
   signal?: AbortSignal,
 ): Promise<{ parts: GeminiPart[]; error?: string }> {
-  const first = await callGeminiOnce(provider, contents, systemInstruction, withTools, signal);
-  if (!first.retryable) return first;
+  const MAX_RETRIES = 3;
+  const DELAYS = [3000, 5000, 8000];
 
-  const delay = first.retryDelayMs ?? 2000;
-  console.warn(`[AI] Gemini 429 (gecici hiz siniri) - ${delay}ms sonra tek seferlik yeniden deneniyor`);
-  await sleep(delay);
+  let lastResult: GeminiCallResult | null = null;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    const result = await callGeminiOnce(provider, contents, systemInstruction, withTools, signal);
+    lastResult = result;
 
-  return callGeminiOnce(provider, contents, systemInstruction, withTools, signal);
+    if (!result.retryable) return result;
+
+    const delay = result.retryDelayMs ?? DELAYS[attempt - 1] ?? 5000;
+    console.warn(`[AI] Gemini 429 (gecici hiz siniri) - ${delay}ms sonra tekrar deneniyor... (Deneme ${attempt}/${MAX_RETRIES})`);
+    await sleep(delay);
+  }
+
+  return {
+    parts: [],
+    error: "⚠️ Google Gemini'nin hız sınırına takıldık. 3 kez tekrar denendi ancak sunucu hala müsait değil. Lütfen birkaç dakika sonra tekrar deneyin.",
+  };
 }
 
 // Gemini ile cok turlu tool dongusu: model fonksiyon cagirir, sonucu
@@ -1029,9 +1048,9 @@ export async function sendMessage(
     const MAX_ROUNDS = 4;
 
     // Boş/geçersiz cevap durumunda bir kez tekrar dene (OpenRouter transient hata).
-    // rateLimited=true ise callOpenAI zaten bir kez backoff'lu yeniden denedi ve
-    // hala 429 aldi - burada GECIKMESIZ ucuncu bir istek atmak Groq'un dakikalik
-    // kotasini (30 RPM / 12K TPM) daha da zorlar, sadece gerçek parse/bos-cevap
+    // rateLimited=true ise callOpenAI zaten 3 kez backoff'lu denedi ve hala
+    // 429 aldi - burada tekrar denemek Groq'un dakikalik
+    // kotasini daha da zorlar, sadece gerçek parse/bos-cevap
     // hatalarinda tekrar deniyoruz.
     let retried = false;
     const callWithRetry = async (msgs: typeof chatMessages, tools?: typeof TOOLS) => {
