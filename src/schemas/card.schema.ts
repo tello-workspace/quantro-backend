@@ -7,6 +7,7 @@ export const createCardSchema = z.object({
   assigneeIds: z.array(z.string()).optional(),
   dueDate: z.string().nullable().optional(),
   position: z.number().optional(),
+  storyPoints: z.number().int().min(0).max(999).nullable().optional(),
 });
 
 export const updateCardSchema = z.object({
@@ -17,6 +18,7 @@ export const updateCardSchema = z.object({
   dueDate: z.string().nullable().optional(),
   columnId: z.string().optional(),
   position: z.number().optional(),
+  storyPoints: z.number().int().min(0).max(999).nullable().optional(),
 });
 
 export type CreateCardInput = z.infer<typeof createCardSchema>;

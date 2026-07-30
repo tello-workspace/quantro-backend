@@ -86,6 +86,7 @@ export async function createCard(columnId: string, input: CreateCardInput, userI
       description: input.description,
       creatorId: userId,
       priority: (input.priority as Priority) ?? "MEDIUM",
+      storyPoints: input.storyPoints,
       dueDate: input.dueDate ? new Date(input.dueDate) : undefined,
       position,
       lastActivityAt: new Date(),
@@ -185,6 +186,7 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
     input.title !== undefined ||
     input.description !== undefined ||
     input.priority !== undefined ||
+    input.storyPoints !== undefined ||
     input.dueDate !== undefined;
 
   if (icerikAlanlariDegisiyor && role !== "ADMIN") {
@@ -220,6 +222,7 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
   if (input.title !== undefined) updateData.title = input.title;
   if (input.description !== undefined) updateData.description = input.description;
   if (input.priority !== undefined) updateData.priority = input.priority as Priority;
+  if (input.storyPoints !== undefined) updateData.storyPoints = input.storyPoints;
   if (input.dueDate !== undefined) updateData.dueDate = input.dueDate ? new Date(input.dueDate) : null;
   if (input.columnId !== undefined) updateData.columnId = input.columnId;
   if (input.position !== undefined) updateData.position = input.position;

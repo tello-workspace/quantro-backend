@@ -44,6 +44,7 @@ export async function getProjectInsights(projectId: string, userId: string) {
       id: true,
       title: true,
       priority: true,
+      storyPoints: true,
       dueDate: true,
       lastActivityAt: true,
       columnId: true,
@@ -67,15 +68,17 @@ export async function getProjectInsights(projectId: string, userId: string) {
       assignees: c.assignees.map((a) => a.user),
     }));
 
-  // Iş yükü dengesi: Done disindaki kartlari assignee'ye gore GROUP BY,
-  // oncelik agirlikli say (URGENT=3, HIGH=2, diger=1). Ortalamanin 1.5 kati
-  // ustundeki kisi "asiri yuklu" isaretlenir.
+  // Iş yükü dengesi: Done disindaki kartlari assignee'ye gore GROUP BY.
+  // storyPoints girilmisse (gercek efor tahmini) onu kullan, girilmemisse
+  // oncelik agirligina dus (URGENT=3, HIGH=2, diger=1) - eskiden tek secenek
+  // buydu, story point eklenince gercek veri varsa tahminden daha isabetli.
+  // Ortalamanin 1.5 kati ustundeki kisi "asiri yuklu" isaretlenir.
   const workloadMap = new Map<
     string,
     { user: { id: string; name: string }; weightedLoad: number; cardCount: number }
   >();
   for (const card of activeCards) {
-    const weight = PRIORITY_WEIGHT[card.priority];
+    const weight = card.storyPoints ?? PRIORITY_WEIGHT[card.priority];
     for (const assignee of card.assignees) {
       const entry = workloadMap.get(assignee.userId) ?? {
         user: assignee.user,

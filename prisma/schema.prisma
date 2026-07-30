@@ -288,6 +288,8 @@ model Card {
   description    String?
   creatorId      String
   priority       Priority  @default(MEDIUM)
+  storyPoints    Int? // Jira'daki story point/tahmini efor - insight motorundaki
+  // is yuku hesabinda varsa oncelik agirligi yerine bu kullanilir (daha isabetli)
   dueDate        DateTime?
   position       Float
   createdAt      DateTime  @default(now())
