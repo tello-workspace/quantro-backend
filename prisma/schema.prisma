@@ -142,6 +142,7 @@ model User {
   uploadedAttachments     CardAttachment[]
   createdAutomationRules  AutomationRule[]
   watchedCards            CardWatcher[]
+  createdCardTemplates    CardTemplate[]
 }
 
 // ---------- ORGANIZATION ----------
@@ -311,6 +312,7 @@ model Project {
   activities     Activity[]
   changeRequests ChangeRequest[]
   automationRules AutomationRule[]
+  cardTemplates   CardTemplate[]
 }
 
 model Column {
@@ -405,6 +407,26 @@ model Label {
 
   project Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
   cards   CardLabel[]
+}
+
+// Trello'daki kart sablonlari: sik kullanilan kart yapisini (checklist dahil)
+// tekrar tekrar elle kurmamak icin. checklistItems duz bir String[] - ayri
+// bir tablo gerektirmiyor, kart olusturulunca bunlar gercek ChecklistItem
+// satirlarina donusturuluyor (bkz. template.service.ts).
+model CardTemplate {
+  id             String   @id @default(cuid())
+  projectId      String
+  name           String
+  title          String
+  description    String?
+  priority       Priority @default(MEDIUM)
+  storyPoints    Int?
+  checklistItems String[] @default([])
+  createdById    String
+  createdAt      DateTime @default(now())
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy User    @relation(fields: [createdById], references: [id])
 }
 
 model CardLabel {
