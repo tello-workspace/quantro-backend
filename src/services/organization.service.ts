@@ -217,9 +217,8 @@ export async function acceptInvitation(invitationId: string, userId: string) {
     userId: member.userId,
     userName: member.user.name,
     role: member.role,
+    message: `${member.user.name}, "${invitation.organization.name}" organizasyonuna katıldı`,
   });
-
-
   return member;
 }
 
@@ -335,6 +334,7 @@ export async function updateMemberRole(organizationId: string, input: UpdateMemb
     });
   }
 
+  // Emit real-time event
   broadcastToOrganization(organizationId, SocketEvents.ORG_MEMBER_ROLE_CHANGED, {
     organizationId,
     userId: input.userId,

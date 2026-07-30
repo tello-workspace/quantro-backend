@@ -123,6 +123,7 @@ export async function deleteColumn(columnId: string, userId: string) {
   broadcastToProject(column.projectId, SocketEvents.COLUMN_DELETED, {
     columnId,
     projectId: column.projectId,
+    deletedBy: userId,
   });
 }
 
