@@ -3,6 +3,7 @@ import { NotFoundError, ForbiddenError } from "@/utils/errors";
 import * as notificationService from "@/services/notification.service";
 import { notifyBlockerResolved } from "@/services/dependency.service";
 import { logActivity } from "@/services/activity.service";
+import * as automationService from "@/services/automation.service";
 import { broadcastToProject, SocketEvents } from "@/server/socket";
 import type { CreateCardInput, UpdateCardInput } from "@/schemas/card.schema";
 import type { Priority } from "@prisma/client";
@@ -119,6 +120,13 @@ export async function createCard(columnId: string, input: CreateCardInput, userI
   });
 
   await logActivity({ projectId, userId, type: "CARD_CREATED", cardId: card.id });
+
+  await automationService.runRulesForTrigger({
+    projectId,
+    trigger: "CARD_CREATED",
+    cardId: card.id,
+    columnId,
+  });
 
   return card;
 }
@@ -290,6 +298,13 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
       await notifyBlockerResolved(updated.id, updated.title);
       await logActivity({ projectId, userId, type: "CARD_COMPLETED", cardId: updated.id });
     }
+
+    await automationService.runRulesForTrigger({
+      projectId,
+      trigger: "CARD_MOVED_TO_COLUMN",
+      cardId: updated.id,
+      columnId: updated.columnId,
+    });
   }
 
   if (newlyAssignedIds.length > 0) {

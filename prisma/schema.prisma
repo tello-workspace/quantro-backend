@@ -55,6 +55,19 @@ enum NotificationType {
   REQUEST_APPROVED // talebin onaylandi
   REQUEST_REJECTED // talebin reddedildi
   MENTIONED // bir yorumda @isim ile etiketlendin
+  AUTOMATION // bir otomasyon kurali seni bilgilendirdi
+}
+
+enum AutomationTrigger {
+  CARD_MOVED_TO_COLUMN // kart belirli bir kolona tasininca
+  CARD_CREATED // kart olusturulunca (belirli bir kolonda veya herhangi birinde)
+}
+
+enum AutomationActionType {
+  ADD_LABEL
+  MOVE_TO_COLUMN
+  ASSIGN_USER
+  SEND_NOTIFICATION
 }
 
 // Uyeler yapisal degisiklikleri dogrudan yapmaz; talep olustururlar.
@@ -126,6 +139,7 @@ model User {
   reviewedRequests        ChangeRequest[]          @relation("ChangeRequestReviewer")
   badges                  UserBadge[]
   uploadedAttachments     CardAttachment[]
+  createdAutomationRules  AutomationRule[]
 }
 
 // ---------- ORGANIZATION ----------
@@ -172,6 +186,32 @@ model ChangeRequest {
 
   @@index([organizationId, status])
   @@index([requestedById, status])
+}
+
+// Basit "tetikleyici -> aksiyon" otomasyonu (Trello Butler / Jira Automation'in
+// hafif versiyonu). Hedef alanlar (actionLabelId/actionColumnId/actionUserId)
+// bilerek gercek bir Prisma iliskisi DEGIL - ChangeRequest.targetColumnId ile
+// ayni desen: referans verilen etiket/kolon/kullanici silinirse kural calisirken
+// sessizce atlanir, DB seviyesinde bir bagimlilik kilidi olusturmaz.
+model AutomationRule {
+  id              String                @id @default(cuid())
+  projectId       String
+  name            String
+  trigger         AutomationTrigger
+  triggerColumnId String? // CARD_MOVED_TO_COLUMN: hedef kolon; CARD_CREATED: null = herhangi bir kolon
+  actionType      AutomationActionType
+  actionLabelId   String? // ADD_LABEL
+  actionColumnId  String? // MOVE_TO_COLUMN
+  actionUserId    String? // ASSIGN_USER / SEND_NOTIFICATION hedefi
+  actionMessage   String? // SEND_NOTIFICATION icin ozel mesaj
+  isActive        Boolean               @default(true)
+  createdById     String
+  createdAt       DateTime              @default(now())
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy User    @relation(fields: [createdById], references: [id])
+
+  @@index([projectId, trigger])
 }
 
 // Organizasyon basina tek sohbet odasi: uyeler ayni akista mesajlasir.
@@ -268,6 +308,7 @@ model Project {
   labels         Label[]
   activities     Activity[]
   changeRequests ChangeRequest[]
+  automationRules AutomationRule[]
 }
 
 model Column {
