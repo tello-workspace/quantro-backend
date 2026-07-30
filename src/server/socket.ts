@@ -800,15 +800,24 @@ export function broadcastToOrganization(organizationId: string, event: SocketEve
 
 export function broadcastToProject(projectId: string, event: SocketEventName, data: unknown) {
   const ioServer = getIO();
-  if (!ioServer) return;
+  console.log(`[SOCKET BROADCAST] Project: ${projectId}, Event: ${event}, IO initialized: ${!!ioServer}`);
+  if (!ioServer) {
+    console.warn(`[SOCKET BROADCAST] Warning: getIO() returned null! Broadcast failed.`);
+    return;
+  }
   (ioServer.to(`project:${projectId}`).emit as (event: string, data: unknown) => void)(event, data);
 }
 
 export function broadcastToCard(cardId: string, event: SocketEventName, data: unknown) {
   const ioServer = getIO();
-  if (!ioServer) return;
+  console.log(`[SOCKET BROADCAST] Card: ${cardId}, Event: ${event}, IO initialized: ${!!ioServer}`);
+  if (!ioServer) {
+    console.warn(`[SOCKET BROADCAST] Warning: getIO() returned null! Broadcast failed.`);
+    return;
+  }
   (ioServer.to(`card:${cardId}`).emit as (event: string, data: unknown) => void)(event, data);
 }
+
 
 function broadcastUserOnline(userId: string) {
   const ioServer = getIO();

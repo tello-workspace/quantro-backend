@@ -3,7 +3,7 @@ import { NotFoundError, ForbiddenError } from "@/utils/errors";
 import * as notificationService from "@/services/notification.service";
 import { notifyBlockerResolved } from "@/services/dependency.service";
 import { logActivity } from "@/services/activity.service";
-import { broadcastToProject, broadcastToUser, SocketEvents } from "@/server/socket";
+import { broadcastToProject, SocketEvents } from "@/server/socket";
 import type { CreateCardInput, UpdateCardInput } from "@/schemas/card.schema";
 import type { Priority } from "@prisma/client";
 
@@ -253,22 +253,11 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
 
   // Sadece yeni eklenen atananlara bildirim gönder
   for (const assigneeId of newlyAssignedIds) {
-    const notif = await notificationService.createNotification({
+    await notificationService.createNotification({
       userId: assigneeId,
       type: "ASSIGNED",
       message: `"${updated.title}" kartı size atandı`,
       cardId: updated.id,
-    });
-
-    broadcastToUser(assigneeId, SocketEvents.NOTIFICATION_NEW, {
-      id: notif.id,
-      userId: assigneeId,
-      type: "ASSIGNED",
-      message: `"${updated.title}" kartı size atandı`,
-      cardId: updated.id,
-      card: { id: updated.id, title: updated.title },
-      read: false,
-      createdAt: notif.createdAt.toISOString(),
     });
   }
 
