@@ -54,7 +54,7 @@ export async function getBoard(projectId: string, userId: string) {
     }),
   ]);
 
-  const boardColumns: Record<string, { id: string; title: string; wipLimit: number | null; taskIds: string[] }> = {};
+  const boardColumns: Record<string, { id: string; title: string; wipLimit: number | null; isDone: boolean; taskIds: string[] }> = {};
   const tasks: Record<string, unknown> = {};
 
   for (const col of columns) {
@@ -82,6 +82,7 @@ export async function getBoard(projectId: string, userId: string) {
       id: col.id,
       title: col.name,
       wipLimit: col.wipLimit,
+      isDone: col.isDone,
       taskIds,
     };
   }
