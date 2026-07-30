@@ -744,21 +744,47 @@ async function runGeminiWithTools(
     contents.push({ role: "model", parts });
 
     const responseParts: GeminiPart[] = [];
-    for (const { functionCall } of functionCalls) {
-      const result = await executeToolByName(
-        functionCall.name,
-        functionCall.args ?? {},
-        userId,
-        projectId,
+    const batchSize = 5;
+    for (let i = 0; i < functionCalls.length; i += batchSize) {
+      const batch = functionCalls.slice(i, i + batchSize);
+      const batchResults = await Promise.all(
+        batch.map(async ({ functionCall }) => {
+          const result = await executeToolByName(
+            functionCall.name,
+            functionCall.args ?? {},
+            userId,
+            projectId,
+          );
+          return {
+            functionResponse: {
+              name: functionCall.name,
+              response: { result },
+            },
+          };
+        })
       );
-      responseParts.push({
-        functionResponse: {
-          name: functionCall.name,
-          response: { result },
-        },
-      });
+      responseParts.push(...batchResults);
     }
     contents.push({ role: "user", parts: responseParts });
+
+    if (functionCalls.length > 5) {
+      const successCount = responseParts.filter(
+        (p): p is { functionResponse: { name: string; response: { result: string } } } =>
+          "functionResponse" in p && typeof p.functionResponse.response.result === "string" && p.functionResponse.response.result.includes("✅")
+      ).length;
+      
+      const failCount = responseParts.filter(
+        (p): p is { functionResponse: { name: string; response: { result: string } } } =>
+          "functionResponse" in p && typeof p.functionResponse.response.result === "string" && p.functionResponse.response.result.includes("❌")
+      ).length;
+
+      const summaries = responseParts
+        .map((p) => ("functionResponse" in p ? (p.functionResponse.response.result as string) : ""))
+        .filter(Boolean)
+        .join("\n");
+
+      return `🤖 **Toplu İşlem Özeti:**\n\nBaşarıyla tamamlanan: ${successCount}\nHatalı/Başarısız: ${failCount}\n\n**Detaylar:**\n${summaries}`;
+    }
   }
 
   return "⚠️ İşlem çok fazla adım sürdü, tamamlanamadı. Lütfen isteğinizi sadeleştirin.";
@@ -1025,14 +1051,34 @@ export async function sendMessage(
         tool_calls: reply.tool_calls,
       });
 
-      // Tool çağrılarını çalıştırıp geçmişe ekle
-      for (const tc of reply.tool_calls) {
-        const result = await executeTool(tc, userId, projectId);
-        chatMessages.push({
-          role: "tool" as const,
-          tool_call_id: tc.id,
-          content: result,
-        });
+      // Tool çağrılarını 5'erli gruplar halinde paralel çalıştırıp geçmişe ekle
+      const batchSize = 5;
+      const roundToolCalls = reply.tool_calls;
+      const results: (ChatMessage | ToolMessage)[] = [];
+      for (let i = 0; i < roundToolCalls.length; i += batchSize) {
+        const batch = roundToolCalls.slice(i, i + batchSize);
+        const batchResults = await Promise.all(
+          batch.map(async (tc) => {
+            const result = await executeTool(tc, userId, projectId);
+            return {
+              role: "tool" as const,
+              tool_call_id: tc.id,
+              content: result,
+            };
+          })
+        );
+        results.push(...batchResults);
+      }
+      chatMessages.push(...results);
+
+      if (roundToolCalls.length > 5) {
+        const successCount = results.filter(m => m.role === "tool" && m.content.includes("✅")).length;
+        const failCount = results.filter(m => m.role === "tool" && m.content.includes("❌")).length;
+        const summaries = results
+          .filter(m => m.role === "tool")
+          .map(m => m.content)
+          .join("\n");
+        return `🤖 **Toplu İşlem Özeti:**\n\nBaşarıyla tamamlanan: ${successCount}\nHatalı/Başarısız: ${failCount}\n\n**Detaylar:**\n${summaries}`;
       }
     }
 
