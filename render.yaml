@@ -23,6 +23,10 @@ services:
         sync: false
       - key: JWT_SECRET
         sync: false
+      - key: AI_KEY_SECRET
+        sync: false
+      - key: CRON_SECRET
+        sync: false
       - key: AI_PROVIDER
         value: google-gemini
       - key: AI_API_KEY

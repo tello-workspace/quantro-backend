@@ -3,6 +3,7 @@ import * as cardService from "@/services/card.service";
 import * as columnService from "@/services/column.service";
 import * as commentService from "@/services/comment.service";
 import { AppError } from "@/utils/errors";
+import { decryptSecret } from "@/utils/crypto";
 
 interface ChatMessage {
   role: "system" | "user" | "assistant";
@@ -45,12 +46,18 @@ async function getProvider(userId?: string): Promise<AIProvider> {
     });
 
     if (user && user.aiProvider && user.aiApiKey) {
-      return {
-        provider: user.aiProvider as AIProvider["provider"],
-        baseUrl: user.aiBaseUrl || (user.aiProvider === "google-gemini" ? "https://generativelanguage.googleapis.com/v1beta" : "https://api.openai.com/v1"),
-        apiKey: user.aiApiKey,
-        model: user.aiModel || (user.aiProvider === "google-gemini" ? "gemini-flash-latest" : "gpt-4o-mini"),
-      };
+      // aiApiKey DB'de sifreli tutulur (bkz. utils/crypto.ts). Cozulemezse
+      // (AI_KEY_SECRET degismis, bozuk veri) global saglayiciya dusulur -
+      // kullanicinin AI ozelligi tamamen kirilmasin diye.
+      const decryptedKey = decryptSecret(user.aiApiKey);
+      if (decryptedKey) {
+        return {
+          provider: user.aiProvider as AIProvider["provider"],
+          baseUrl: user.aiBaseUrl || (user.aiProvider === "google-gemini" ? "https://generativelanguage.googleapis.com/v1beta" : "https://api.openai.com/v1"),
+          apiKey: decryptedKey,
+          model: user.aiModel || (user.aiProvider === "google-gemini" ? "gemini-flash-latest" : "gpt-4o-mini"),
+        };
+      }
     }
   }
 

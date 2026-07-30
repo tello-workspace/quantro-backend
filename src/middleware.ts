@@ -6,6 +6,11 @@ export function middleware(request: NextRequest) {
 
   // Preflight (OPTIONS) — Vercel serverless'ta browser CORS kontrolu
   if (request.method === "OPTIONS") {
+    // allowlist disi bir origin: CORS header'i hic eklemeden 204 don -
+    // tarayici bunu izin verilmemis olarak yorumlar ve istegi bloklar.
+    if (!allowedOrigin) {
+      return new NextResponse(null, { status: 204 });
+    }
     return new NextResponse(null, {
       status: 204,
       headers: {
@@ -18,10 +23,12 @@ export function middleware(request: NextRequest) {
   }
 
   const response = NextResponse.next();
-  response.headers.set("Access-Control-Allow-Origin", allowedOrigin);
-  response.headers.set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
-  response.headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  response.headers.set("Access-Control-Allow-Credentials", "true");
+  if (allowedOrigin) {
+    response.headers.set("Access-Control-Allow-Origin", allowedOrigin);
+    response.headers.set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
+    response.headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    response.headers.set("Access-Control-Allow-Credentials", "true");
+  }
   return response;
 }
 

@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { signToken } from "@/utils/jwt";
 import { AppError, ConflictError, UnauthorizedError, ValidationError } from "@/utils/errors";
 import { sendPasswordResetEmail, sendVerificationEmail, hasValidMxRecord } from "@/utils/email";
+import { encryptSecret } from "@/utils/crypto";
 import type {
   RegisterInput,
   LoginInput,
@@ -239,10 +240,19 @@ const PROFILE_SELECT = {
   expertiseAreas: true,
   languages: true,
   aiProvider: true,
-  aiApiKey: true,
+  aiApiKey: true, // sadece varlik kontrolu icin secilir, cevapta hicbir zaman geri donmez
   aiBaseUrl: true,
   aiModel: true,
 } as const;
+
+// aiApiKey sifreli tutulur (bkz. utils/crypto.ts) ve API'den asla geri
+// donmez - sadece kayitli olup olmadigi (hasAiApiKey) bilgisi verilir.
+// Boylece paylasilan DB bir sekilde disari sizsa (dump, log vb.) kullanicilarin
+// gercek OpenAI/Groq anahtarlari acikta olmaz.
+function toProfileResponse<T extends { aiApiKey: string | null }>(user: T) {
+  const { aiApiKey, ...rest } = user;
+  return { ...rest, hasAiApiKey: aiApiKey !== null };
+}
 
 export async function getMe(userId: string) {
   const user = await prisma.user.findUnique({
@@ -254,7 +264,7 @@ export async function getMe(userId: string) {
     throw new UnauthorizedError("Kullanıcı bulunamadı");
   }
 
-  return user;
+  return toProfileResponse(user);
 }
 
 export async function updateProfile(userId: string, input: UpdateProfileInput) {
@@ -269,12 +279,17 @@ export async function updateProfile(userId: string, input: UpdateProfileInput) {
       ...(input.expertiseAreas !== undefined && { expertiseAreas: input.expertiseAreas }),
       ...(input.languages !== undefined && { languages: input.languages }),
       ...(input.aiProvider !== undefined && { aiProvider: input.aiProvider }),
-      ...(input.aiApiKey !== undefined && { aiApiKey: input.aiApiKey }),
+      // Bos string/null = "anahtari kaldir", dolu string = sifrelenip saklanir.
+      // Frontend "degistirmedim" durumunda bu alani hic gondermiyor (undefined
+      // kalir), o yuzden burada dokunulmamis anahtar asla ustune yazilmaz.
+      ...(input.aiApiKey !== undefined && {
+        aiApiKey: input.aiApiKey ? encryptSecret(input.aiApiKey) : null,
+      }),
       ...(input.aiBaseUrl !== undefined && { aiBaseUrl: input.aiBaseUrl }),
       ...(input.aiModel !== undefined && { aiModel: input.aiModel }),
     },
     select: PROFILE_SELECT,
   });
 
-  return user;
+  return toProfileResponse(user);
 }

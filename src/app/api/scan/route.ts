@@ -1,15 +1,43 @@
 import { NextRequest } from "next/server";
 import { runNightlyScan } from "@/services/scan.service";
 import { successResponse, errorResponse, handleApiError } from "@/utils/api-response";
-import { authenticate } from "@/middleware/auth";
-import { AppError } from "@/utils/errors";
+import { authenticate, AuthenticatedRequest } from "@/middleware/auth";
+import { AppError, ForbiddenError } from "@/utils/errors";
+import { prisma } from "@/lib/prisma";
 
-// Gece taramasini elle tetiklemek icin (test + gerekirse manuel calistirma).
-export async function POST(request: NextRequest) {
+// Bu endpoint TUM organizasyonlardaki TUM projeleri tarar - eskiden sadece
+// giris yapmis olmak yetiyordu, yani herhangi bir kullanici diledigi kadar
+// tetikleyip paylasilan DB'ye agir yuk bindirebilir ve bildirim spam'i
+// yaratabilirdi. Iki yoldan biri gecerli:
+// 1) `x-cron-secret` header'i CRON_SECRET ile eslesirse (GitHub Actions'daki
+//    zamanlanmis is buradan cagirir, bkz. .github/workflows/nightly-scan.yml)
+// 2) Istek giris yapmis VE herhangi bir organizasyonda ADMIN olan bir
+//    kullanicidan geliyorsa (manuel/test tetikleme icin)
+async function authorizeCronRequest(request: NextRequest) {
+  const cronSecret = process.env.CRON_SECRET;
+  const providedSecret = request.headers.get("x-cron-secret");
+  if (cronSecret && providedSecret === cronSecret) return null;
+
   const authError = await authenticate(request);
   if (authError) return authError;
 
+  const user = (request as AuthenticatedRequest).user;
+  const adminMembership = await prisma.organizationMember.findFirst({
+    where: { userId: user.id, role: "ADMIN" },
+    select: { userId: true },
+  });
+  if (!adminMembership) {
+    throw new ForbiddenError("Bu işlemi tetikleme yetkiniz yok");
+  }
+  return null;
+}
+
+// Gece taramasini elle tetiklemek icin (test + gerekirse manuel calistirma).
+export async function POST(request: NextRequest) {
   try {
+    const authError = await authorizeCronRequest(request);
+    if (authError) return authError;
+
     const result = await runNightlyScan();
     return successResponse(result);
   } catch (error) {

@@ -1,0 +1,24 @@
+name: Nightly Scan
+
+# In-process node-cron (bkz. src/lib/cron.ts) sadece server process'i o anda
+# ayaktaysa calisir. Render planinin uyku moduna gecip gecmedigi zaman zaman
+# belirsiz oldugu icin (Free planda 15dk hareketsizlik sonrasi uyur) bu is
+# ayni taramayi disaridan, backend'in ayakta olmasindan bagimsiz sekilde
+# tetikler. runNightlyScan() idempotenttir (notifyOnce ayni bildirimi tekrar
+# olusturmaz) - iki tetikleyicinin ayni gece calismasi zararsizdir.
+#
+# GitHub Actions'in schedule'i her zaman UTC'dir; backend'deki "0 3 * * *"
+# de container'in TZ'i UTC oldugu surece ayni saatte calisir.
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  trigger-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: /api/scan tetikle
+        run: |
+          curl -fsS -X POST "https://tello-backend.onrender.com/api/scan" \
+            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}"
