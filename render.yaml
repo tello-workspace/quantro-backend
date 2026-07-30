@@ -38,8 +38,12 @@ services:
         sync: false
       - key: AI_BASE_URL
         value: https://api.groq.com/openai/v1
+      # 30 Tem 2026'da 70b-versatile'den 8b-instant'a gecildi: 8b'nin Groq
+      # ucretsiz kotasi cok daha genis (30K TPM/14.400 RPD vs 12K TPM/1.000
+      # RPD) - AI sohbetinin system prompt'u her mesajda tum board'u yeniden
+      # gonderdigi icin 70b'nin dar kotasi normal kullanimda bile asiliyordu.
       - key: AI_MODEL
-        value: llama-3.3-70b-versatile
+        value: llama-3.1-8b-instant
       # Deploy sonrasi frontend'in gercek Render URL'iyle guncellenmeli —
       # CORS ve Socket.IO handshake bu deger uzerinden dogrulaniyor.
       - key: FRONTEND_URL
