@@ -51,6 +51,11 @@ export interface ServerSocketEvents {
   [SocketEvents.ATTACHMENT_ADDED]: (attachment: AttachmentPayload) => void;
   [SocketEvents.ATTACHMENT_DELETED]: (data: { cardId: string; attachmentId: string }) => void;
 
+  // Checklist (alt gorev listesi) events
+  [SocketEvents.CHECKLIST_ITEM_ADDED]: (item: ChecklistItemPayload) => void;
+  [SocketEvents.CHECKLIST_ITEM_UPDATED]: (item: ChecklistItemPayload) => void;
+  [SocketEvents.CHECKLIST_ITEM_DELETED]: (data: { cardId: string; itemId: string }) => void;
+
   // Organizasyon sohbeti
   [SocketEvents.CHAT_MESSAGE_NEW]: (message: ChatMessagePayload) => void;
   [SocketEvents.CHAT_TYPING]: (data: ChatTypingPayload) => void;
@@ -119,6 +124,10 @@ export enum SocketEvents {
   COMMENT_ADDED = "comment:added",
   COMMENT_UPDATED = "comment:updated",
   COMMENT_DELETED = "comment:deleted",
+
+  CHECKLIST_ITEM_ADDED = "checklist:item:added",
+  CHECKLIST_ITEM_UPDATED = "checklist:item:updated",
+  CHECKLIST_ITEM_DELETED = "checklist:item:deleted",
 
   // Kart eki (dosya/gorsel)
   ATTACHMENT_ADDED = "attachment:added",
@@ -242,6 +251,14 @@ export interface AttachmentPayload {
   fileSize: number;
   mimeType: string;
   createdAt: string;
+}
+
+export interface ChecklistItemPayload {
+  id: string;
+  cardId: string;
+  text: string;
+  done: boolean;
+  position: number;
 }
 
 export interface ChatMessagePayload {

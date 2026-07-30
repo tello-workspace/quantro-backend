@@ -308,6 +308,7 @@ model Card {
   notifications  Notification[]
   changeRequests ChangeRequest[]
   attachments    CardAttachment[]
+  checklistItems ChecklistItem[]
 
   @@index([columnId])
   @@index([lastActivityAt]) // cron taraması hızlı olsun
@@ -371,6 +372,22 @@ model CardAttachment {
 
   card     Card @relation(fields: [cardId], references: [id], onDelete: Cascade)
   uploader User @relation(fields: [uploaderId], references: [id])
+
+  @@index([cardId])
+}
+
+// Kart icindeki alt gorev listesi (Trello'daki "Checklist"). Sirali (position,
+// fractional indexing - CardAttachment/Comment'ten farkli olarak yeniden
+// siralanabilir oldugu icin Card.position ile ayni desen kullanildi).
+model ChecklistItem {
+  id        String   @id @default(cuid())
+  cardId    String
+  text      String
+  done      Boolean  @default(false)
+  position  Float
+  createdAt DateTime @default(now())
+
+  card Card @relation(fields: [cardId], references: [id], onDelete: Cascade)
 
   @@index([cardId])
 }

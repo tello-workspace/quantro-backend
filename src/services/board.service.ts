@@ -48,6 +48,9 @@ export async function getBoard(projectId: string, userId: string) {
           include: {
             assignees: { include: { user: { select: { id: true, name: true, badges: { include: { badge: { select: { id: true, name: true, color: true, icon: true } } } } } } } },
             labels: { include: { label: true } },
+            // Panoda sadece "3/7" ilerleme rozeti icin - madde metinleri
+            // TaskModal acilinca ayri bir istekle cekiliyor.
+            checklistItems: { select: { done: true } },
           },
         },
       },
@@ -76,6 +79,8 @@ export async function getBoard(projectId: string, userId: string) {
           name: cl.label.name,
           color: cl.label.color,
         })),
+        checklistTotal: card.checklistItems.length,
+        checklistDone: card.checklistItems.filter((c) => c.done).length,
       };
     }
     boardColumns[col.id] = {
