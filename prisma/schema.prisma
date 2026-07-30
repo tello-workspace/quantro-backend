@@ -54,6 +54,7 @@ enum NotificationType {
   REQUEST_CREATED // uye yeni bir degisiklik talebi gonderdi (adminlere)
   REQUEST_APPROVED // talebin onaylandi
   REQUEST_REJECTED // talebin reddedildi
+  MENTIONED // bir yorumda @isim ile etiketlendin
 }
 
 // Uyeler yapisal degisiklikleri dogrudan yapmaz; talep olustururlar.

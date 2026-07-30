@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { NotFoundError, ForbiddenError } from "@/utils/errors";
 import { logActivity } from "@/services/activity.service";
 import { broadcastToProject, SocketEvents } from "@/server/socket";
+import * as notificationService from "@/services/notification.service";
 import type { CreateCommentInput, UpdateCommentInput } from "@/schemas/comment.schema";
 
 // Kartın kolonuna → projesine → organizasyonuna erişim kontrolü
@@ -22,7 +23,37 @@ async function checkCardAccess(cardId: string, userId: string) {
   });
   if (!member) throw new ForbiddenError("Bu karta erişim yetkiniz yok");
 
-  return { role: member.role, projectId: card.column.projectId };
+  return {
+    role: member.role,
+    projectId: card.column.projectId,
+    organizationId: card.column.project.organizationId,
+  };
+}
+
+// Yorum metninde "@Ad Soyad" gecen organizasyon uyelerini bulur. Ozel bir
+// mention-token formati yok (frontend'deki otomatik tamamlama tam adi
+// yaziyor) - bu yuzden en guvenilir yol, bilinen uye adlarini metinde
+// dogrudan aramak. Regex ile isim ayristirmaya calismak (bosluklu isimler
+// yuzunden) yanlis pozitif/negatif uretebilirdi.
+async function extractMentionedUserIds(
+  text: string,
+  organizationId: string,
+  excludeUserId: string,
+): Promise<string[]> {
+  const members = await prisma.organizationMember.findMany({
+    where: { organizationId },
+    select: { userId: true, user: { select: { name: true } } },
+  });
+
+  const lowerText = text.toLowerCase();
+  const mentioned = new Set<string>();
+  for (const m of members) {
+    if (m.userId === excludeUserId) continue;
+    if (lowerText.includes(`@${m.user.name}`.toLowerCase())) {
+      mentioned.add(m.userId);
+    }
+  }
+  return Array.from(mentioned);
 }
 
 export async function getComments(cardId: string, userId: string) {
@@ -40,7 +71,7 @@ export async function getComments(cardId: string, userId: string) {
 }
 
 export async function createComment(cardId: string, input: CreateCommentInput, userId: string) {
-  const { projectId } = await checkCardAccess(cardId, userId);
+  const { projectId, organizationId } = await checkCardAccess(cardId, userId);
 
   const comment = await prisma.comment.create({
     data: {
@@ -69,6 +100,16 @@ export async function createComment(cardId: string, input: CreateCommentInput, u
     cardId,
     data: { preview: comment.text.slice(0, 80) },
   });
+
+  const mentionedUserIds = await extractMentionedUserIds(input.text, organizationId, userId);
+  for (const mentionedUserId of mentionedUserIds) {
+    await notificationService.createNotification({
+      userId: mentionedUserId,
+      type: "MENTIONED",
+      message: `${comment.author.name} seni bir yorumda etiketledi: "${comment.text.slice(0, 80)}"`,
+      cardId,
+    });
+  }
 
   return comment;
 }
