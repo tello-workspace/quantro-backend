@@ -524,7 +524,7 @@ async function callOpenAI(
   tools?: typeof TOOLS,
   signal?: AbortSignal,
   responseFormat?: { type: "json_object" },
-): Promise<{ content: string; tool_calls?: ToolCall[] }> {
+): Promise<{ content: string; tool_calls?: ToolCall[]; rateLimited?: boolean }> {
   const first = await callOpenAIOnce(provider, messages, tools, signal, responseFormat);
   if (!first.retryable) return first;
 
@@ -532,7 +532,12 @@ async function callOpenAI(
   console.warn(`[AI] Groq/OpenAI 429 (gecici hiz siniri) - ${delay}ms sonra tek seferlik yeniden deneniyor`);
   await sleep(delay);
 
-  return callOpenAIOnce(provider, messages, tools, signal, responseFormat);
+  const second = await callOpenAIOnce(provider, messages, tools, signal, responseFormat);
+  // Ikinci deneme de 429 donduyse hala hiz sinirindeyiz - bunu isaretliyoruz
+  // ki disaridaki "bos/gecersiz cevapta tekrar dene" mantigi bunu GECIKMESIZ
+  // ucuncu bir istekle tekrar denemesin (hiz sinirini tekrar denemek yerine
+  // daha da kotulestirir, bkz. callWithRetry).
+  return { ...second, rateLimited: second.retryable };
 }
 
 // ─── Gemini (function calling ile) ─────────────────────────────────
@@ -997,11 +1002,15 @@ export async function sendMessage(
     const chatMessages: (ChatMessage | ToolMessage)[] = [...apiMessages];
     const MAX_ROUNDS = 4;
 
-    // Boş/geçersiz cevap durumunda bir kez tekrar dene (OpenRouter transient hata)
+    // Boş/geçersiz cevap durumunda bir kez tekrar dene (OpenRouter transient hata).
+    // rateLimited=true ise callOpenAI zaten bir kez backoff'lu yeniden denedi ve
+    // hala 429 aldi - burada GECIKMESIZ ucuncu bir istek atmak Groq'un dakikalik
+    // kotasini (30 RPM / 12K TPM) daha da zorlar, sadece gerçek parse/bos-cevap
+    // hatalarinda tekrar deniyoruz.
     let retried = false;
     const callWithRetry = async (msgs: typeof chatMessages, tools?: typeof TOOLS) => {
       const reply = await callOpenAI(provider, msgs, tools, controller.signal);
-      if (reply.content?.startsWith("⚠️") && !retried) {
+      if (reply.content?.startsWith("⚠️") && !reply.rateLimited && !retried) {
         retried = true;
         console.warn("[AI] Ilk denemede hata, bir kez yeniden deneniyor...");
         return callOpenAI(provider, [...apiMessages], tools, controller.signal);
