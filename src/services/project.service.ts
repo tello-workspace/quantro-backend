@@ -12,12 +12,6 @@ async function checkMembership(organizationId: string, userId: string) {
   return member;
 }
 
-// ADMIN mi kontrol et
-async function checkAdmin(organizationId: string, userId: string) {
-  const member = await checkMembership(organizationId, userId);
-  return member?.role === "ADMIN";
-}
-
 export async function createProject(organizationId: string, input: CreateProjectInput, userId: string) {
   const member = await checkMembership(organizationId, userId);
   if (!member) throw new ForbiddenError("Bu organizasyonda proje oluşturma yetkiniz yok");
@@ -55,6 +49,7 @@ export async function createProject(organizationId: string, input: CreateProject
     userId, // yapan hariç
   );
 
+  // Emit real-time event
   broadcastToOrganization(organizationId, SocketEvents.PROJECT_CREATED, {
     id: project.id,
     name: project.name,
@@ -128,6 +123,7 @@ export async function updateProject(organizationId: string, projectId: string, i
     data: input,
   });
 
+  // Emit real-time event
   broadcastToOrganization(organizationId, SocketEvents.PROJECT_UPDATED, {
     id: updated.id,
     name: updated.name,
@@ -160,10 +156,11 @@ export async function deleteProject(organizationId: string, projectId: string, u
     userId, // yapan hariç
   );
 
-  await prisma.project.delete({ where: { id: projectId } });
-
+  // Emit real-time event
   broadcastToOrganization(organizationId, SocketEvents.PROJECT_DELETED, {
     projectId,
     projectName: project.name,
   });
+
+  await prisma.project.delete({ where: { id: projectId } });
 }
