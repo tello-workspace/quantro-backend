@@ -431,11 +431,17 @@ async function callOpenAIOnce(
     body.response_format = responseFormat;
   }
 
+  const isOpenRouter = provider.baseUrl.includes("openrouter.ai");
+
   const response = await fetch(`${provider.baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${provider.apiKey}`,
+      ...(isOpenRouter ? {
+        "HTTP-Referer": process.env.FRONTEND_URL?.split(",")[0]?.trim() || "https://tello-frontend.onrender.com",
+        "X-Title": "Tello",
+      } : {}),
     },
     body: JSON.stringify(body),
     signal,
@@ -459,7 +465,11 @@ async function callOpenAIOnce(
         retryDelayMs: !isNaN(retryAfterSec) ? Math.min(Math.ceil(retryAfterSec * 1000), 10_000) : undefined,
       };
     }
-    return { content: `⚠️ AI servisi şu anda kullanılamıyor. (Hata: ${response.status})` };
+    // Detayli hatayi goster (OpenRouter vb. ozel mesajlar icin)
+    let detail = "";
+    try { const j = JSON.parse(errorBody); detail = j.error?.message || j.error?.code || ""; } catch {}
+    const extra = detail ? ` — ${detail}` : "";
+    return { content: `⚠️ AI servisi şu anda kullanılamıyor. (Hata: ${response.status})${extra}` };
   }
 
   let raw = await response.text();
