@@ -2,7 +2,8 @@
 // Kullanım: backend/prisma/schema.prisma olarak kaydet → npx prisma migrate dev --name init
 
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["relationJoins"]
 }
 
 datasource db {
@@ -136,11 +137,14 @@ model User {
   bio             String?
   experience      String? // serbest metin: "2 yıl 3 ay", "6 ay", "Yeni başladım" vb.
   githubUrl       String?
-  linkedinUrl     String? 
-  expertiseAreas  String[] @default([]) 
-  languages       String[] @default([]) 
-  language        String   @default("tr") 
- 
+  linkedinUrl     String?
+  expertiseAreas  String[] @default([])
+  languages       String[] @default([])
+  // Supabase Storage'daki genel (public) "avatars" bucket'ina yuklenmis
+  // fotografin tam URL'i - CardAttachment'tan farkli olarak imzali URL
+  // gerekmiyor, profil fotografi zaten herkese acik gosterilecek bir sey.
+  avatarUrl       String?
+  language        String   @default("tr")
   // User-specific AI configurations
   aiProvider      String?
   aiApiKey        String?

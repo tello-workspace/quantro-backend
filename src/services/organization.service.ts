@@ -83,6 +83,7 @@ export async function getOrganizationById(organizationId: string, userId: string
                 id: true,
                 name: true,
                 email: true,
+                avatarUrl: true,
                 badges: { include: { badge: true } },
               },
             },

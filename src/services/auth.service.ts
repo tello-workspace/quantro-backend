@@ -232,6 +232,7 @@ const PROFILE_SELECT = {
   name: true,
   email: true,
   createdAt: true,
+  avatarUrl: true,
   title: true,
   bio: true,
   experience: true,
