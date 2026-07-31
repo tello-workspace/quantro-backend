@@ -47,6 +47,7 @@ export const updateProfileSchema = z.object({
   linkedinUrl: z.string().url("Geçerli bir URL girin").max(200).optional().nullable(),
   expertiseAreas: z.array(z.string().min(1).max(50)).max(20).optional(),
   languages: z.array(z.string().min(1).max(50)).max(20).optional(),
+  language: z.string().max(10).optional().nullable(),
   aiProvider: z.string().max(50).optional().nullable(),
   aiApiKey: z.string().max(500).optional().nullable(),
   aiBaseUrl: z.string().max(500).optional().nullable(),

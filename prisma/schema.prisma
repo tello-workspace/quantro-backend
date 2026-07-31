@@ -115,6 +115,7 @@ model User {
   linkedinUrl     String?
   expertiseAreas  String[] @default([])
   languages       String[] @default([])
+  language        String   @default("tr")
 
   // User-specific AI configurations
   aiProvider      String?

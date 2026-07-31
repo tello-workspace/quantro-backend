@@ -91,144 +91,144 @@ const TOOLS: {
     parameters: Record<string, unknown>;
   };
 }[] = [
-  {
-    type: "function",
-    function: {
-      name: "create_card",
-      description: "Bir kolona yeni bir kart oluşturur. columnId zorunludur.",
-      parameters: {
-        type: "object",
-        properties: {
-          columnId: { type: "string", description: "Kolon ID'si" },
-          title: { type: "string", description: "Kart başlığı" },
-          description: { type: "string", description: "Kart açıklaması (opsiyonel)" },
-          priority: {
-            type: "string",
-            enum: ["LOW", "MEDIUM", "HIGH", "URGENT"],
-            description: "Öncelik (opsiyonel, varsayılan: MEDIUM)",
+    {
+      type: "function",
+      function: {
+        name: "create_card",
+        description: "Bir kolona yeni bir kart oluşturur. columnId zorunludur.",
+        parameters: {
+          type: "object",
+          properties: {
+            columnId: { type: "string", description: "Kolon ID'si" },
+            title: { type: "string", description: "Kart başlığı" },
+            description: { type: "string", description: "Kart açıklaması (opsiyonel)" },
+            priority: {
+              type: "string",
+              enum: ["LOW", "MEDIUM", "HIGH", "URGENT"],
+              description: "Öncelik (opsiyonel, varsayılan: MEDIUM)",
+            },
+            assigneeIds: {
+              type: "array",
+              items: { type: "string" },
+              description: "Atanacak kullanıcı ID'leri (opsiyonel)",
+            },
+            dueDate: {
+              type: "string",
+              description: "Bitiş tarihi ISO format (opsiyonel)",
+            },
           },
-          assigneeIds: {
-            type: "array",
-            items: { type: "string" },
-            description: "Atanacak kullanıcı ID'leri (opsiyonel)",
+          required: ["columnId", "title"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "update_card",
+        description: "Bir kartı günceller. Sadece gönderilen alanlar değişir.",
+        parameters: {
+          type: "object",
+          properties: {
+            cardId: { type: "string", description: "Kart ID'si" },
+            title: { type: "string", description: "Yeni başlık" },
+            description: { type: "string", description: "Yeni açıklama" },
+            priority: {
+              type: "string",
+              enum: ["LOW", "MEDIUM", "HIGH", "URGENT"],
+              description: "Öncelik",
+            },
+            dueDate: { type: "string", description: "Bitiş tarihi ISO format" },
           },
-          dueDate: {
-            type: "string",
-            description: "Bitiş tarihi ISO format (opsiyonel)",
+          required: ["cardId"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "delete_card",
+        description: "Bir kartı siler.",
+        parameters: {
+          type: "object",
+          properties: {
+            cardId: { type: "string", description: "Silinecek kart ID'si" },
           },
+          required: ["cardId"],
         },
-        required: ["columnId", "title"],
       },
     },
-  },
-  {
-    type: "function",
-    function: {
-      name: "update_card",
-      description: "Bir kartı günceller. Sadece gönderilen alanlar değişir.",
-      parameters: {
-        type: "object",
-        properties: {
-          cardId: { type: "string", description: "Kart ID'si" },
-          title: { type: "string", description: "Yeni başlık" },
-          description: { type: "string", description: "Yeni açıklama" },
-          priority: {
-            type: "string",
-            enum: ["LOW", "MEDIUM", "HIGH", "URGENT"],
-            description: "Öncelik",
+    {
+      type: "function",
+      function: {
+        name: "move_card",
+        description: "Bir kartı başka bir kolona taşır.",
+        parameters: {
+          type: "object",
+          properties: {
+            cardId: { type: "string", description: "Taşınacak kart ID'si" },
+            targetColumnId: { type: "string", description: "Hedef kolon ID'si" },
           },
-          dueDate: { type: "string", description: "Bitiş tarihi ISO format" },
+          required: ["cardId", "targetColumnId"],
         },
-        required: ["cardId"],
       },
     },
-  },
-  {
-    type: "function",
-    function: {
-      name: "delete_card",
-      description: "Bir kartı siler.",
-      parameters: {
-        type: "object",
-        properties: {
-          cardId: { type: "string", description: "Silinecek kart ID'si" },
-        },
-        required: ["cardId"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "move_card",
-      description: "Bir kartı başka bir kolona taşır.",
-      parameters: {
-        type: "object",
-        properties: {
-          cardId: { type: "string", description: "Taşınacak kart ID'si" },
-          targetColumnId: { type: "string", description: "Hedef kolon ID'si" },
-        },
-        required: ["cardId", "targetColumnId"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "assign_users",
-      description: "Bir karta kullanıcı ataması yapar.",
-      parameters: {
-        type: "object",
-        properties: {
-          cardId: { type: "string", description: "Kart ID'si" },
-          assigneeIds: {
-            type: "array",
-            items: { type: "string" },
-            description: "Atanacak kullanıcı ID'lerinin listesi (mevcut atamaları TAMAMEN değiştirir)",
+    {
+      type: "function",
+      function: {
+        name: "assign_users",
+        description: "Bir karta kullanıcı ataması yapar.",
+        parameters: {
+          type: "object",
+          properties: {
+            cardId: { type: "string", description: "Kart ID'si" },
+            assigneeIds: {
+              type: "array",
+              items: { type: "string" },
+              description: "Atanacak kullanıcı ID'lerinin listesi (mevcut atamaları TAMAMEN değiştirir)",
+            },
           },
+          required: ["cardId", "assigneeIds"],
         },
-        required: ["cardId", "assigneeIds"],
       },
     },
-  },
-  {
-    type: "function",
-    function: {
-      name: "add_comment",
-      description: "Bir karta yorum ekler.",
-      parameters: {
-        type: "object",
-        properties: {
-          cardId: { type: "string", description: "Kart ID'si" },
-          text: { type: "string", description: "Yorum metni" },
+    {
+      type: "function",
+      function: {
+        name: "add_comment",
+        description: "Bir karta yorum ekler.",
+        parameters: {
+          type: "object",
+          properties: {
+            cardId: { type: "string", description: "Kart ID'si" },
+            text: { type: "string", description: "Yorum metni" },
+          },
+          required: ["cardId", "text"],
         },
-        required: ["cardId", "text"],
       },
     },
-  },
-  {
-    type: "function",
-    function: {
-      name: "list_columns",
-      description: "Projedeki tüm kolonları ve kartları listeler. projectId otomatiktir, parametre verme.",
-      parameters: {
-        type: "object",
-        properties: {},
+    {
+      type: "function",
+      function: {
+        name: "list_columns",
+        description: "Projedeki tüm kolonları ve kartları listeler. projectId otomatiktir, parametre verme.",
+        parameters: {
+          type: "object",
+          properties: {},
+        },
       },
     },
-  },
-  {
-    type: "function",
-    function: {
-      name: "list_members",
-      description: "Projedeki/organizasyondaki tüm üyeleri ve onların uzmanlık/yetkinlik bilgilerini listeler. projectId otomatiktir, parametre verme.",
-      parameters: {
-        type: "object",
-        properties: {},
+    {
+      type: "function",
+      function: {
+        name: "list_members",
+        description: "Projedeki/organizasyondaki tüm üyeleri ve onların uzmanlık/yetkinlik bilgilerini listeler. projectId otomatiktir, parametre verme.",
+        parameters: {
+          type: "object",
+          properties: {},
+        },
       },
     },
-  },
-];
+  ];
 
 // ─── Tool Executor ──────────────────────────────────────────────────
 
@@ -403,7 +403,7 @@ function parseDSML(content: string): ToolCall[] | undefined {
   }
 
   const toolCalls: ToolCall[] = [];
-  
+
   // Extract all invoke blocks: <｜｜DSML｜｜invoke name="NAME">PARAMS</｜｜DSML｜｜invoke>
   const invokeRegex = /<｜｜DSML｜｜invoke\s+name="([^"]+)"\s*>([\s\S]*?)<\/｜｜DSML｜｜invoke>/g;
   let invokeMatch;
@@ -412,7 +412,7 @@ function parseDSML(content: string): ToolCall[] | undefined {
   while ((invokeMatch = invokeRegex.exec(content)) !== null) {
     const functionName = invokeMatch[1];
     const paramsBlock = invokeMatch[2];
-    
+
     // Extract all parameters: <｜｜DSML｜｜parameter name="NAME"[^>]*>VALUE</｜｜DSML｜｜parameter>
     const paramRegex = /<｜｜DSML｜｜parameter\s+name="([^"]+)"[^>]*>([\s\S]*?)<\/｜｜DSML｜｜parameter>/g;
     let paramMatch;
@@ -421,7 +421,7 @@ function parseDSML(content: string): ToolCall[] | undefined {
     while ((paramMatch = paramRegex.exec(paramsBlock)) !== null) {
       const paramName = paramMatch[1];
       const paramValue = paramMatch[2].trim();
-      
+
       let parsedValue: any = paramValue;
       if (
         (paramValue.startsWith("[") && paramValue.endsWith("]")) ||
@@ -522,7 +522,7 @@ async function callOpenAIOnce(
     }
     // Detayli hatayi goster (OpenRouter vb. ozel mesajlar icin)
     let detail = "";
-    try { const j = JSON.parse(errorBody); detail = j.error?.message || j.error?.code || ""; } catch {}
+    try { const j = JSON.parse(errorBody); detail = j.error?.message || j.error?.code || ""; } catch { }
     const extra = detail ? ` — ${detail}` : "";
     return { content: `⚠️ AI servisi şu anda kullanılamıyor. (Hata: ${response.status})${extra}` };
   }
@@ -844,7 +844,7 @@ async function runGeminiWithTools(
         (p): p is { functionResponse: { name: string; response: { result: string } } } =>
           "functionResponse" in p && typeof p.functionResponse.response.result === "string" && p.functionResponse.response.result.includes("✅")
       ).length;
-      
+
       const failCount = responseParts.filter(
         (p): p is { functionResponse: { name: string; response: { result: string } } } =>
           "functionResponse" in p && typeof p.functionResponse.response.result === "string" && p.functionResponse.response.result.includes("❌")
@@ -869,12 +869,10 @@ function buildSystemPrompt(
   boardContext: string,
   userName: string,
   userRole: "ADMIN" | "MEMBER",
+  language: string = "tr",
 ): string {
   const isAdmin = userRole === "ADMIN";
 
-  // Yetkiler arayuzdekiyle birebir ayni. Sunucu tarafinda card.service
-  // zaten zorluyor; burada modele de soyluyoruz ki bosuna deneyip
-  // kullaniciya hata mesaji gostermek yerine durumu acikca anlatsin.
   const permissions = isAdmin
     ? `Bu kullanıcı bu organizasyonda ADMIN. Tüm işlemleri yapabilirsin:
 - Kart oluşturma, düzenleme, silme, taşıma
@@ -889,12 +887,26 @@ Bunun yerine kibarca "görev atama ve kart oluşturma yalnızca adminlerde, orga
 adminine iletebilirsin" de. Yine de denersen sunucu isteği reddeder.`;
 
   const contextSection = boardContext
-    ? `Proje panosundaki mevcut durum:\n${boardContext}`
-    : `NOT: Şu anda proje panosu bağlamı (sütunlar, kartlar ve üyeler) token tasarrufu amacıyla ilk prompta eklenmemiştir.
+    ? (language === "en"
+      ? `Current state of the project board:\n${boardContext}`
+      : `Proje panosundaki mevcut durum:\n${boardContext}`)
+    : (language === "en"
+      ? `NOTE: The project board context (columns, cards, members) is currently not included in the initial prompt to save tokens.
+If the user asks questions about cards, columns, or members, wants to assign a task, or perform an operation,
+you MUST first call the "list_columns" or "list_members" tools to get the latest status.`
+      : `NOT: Şu anda proje panosu bağlamı (sütunlar, kartlar ve üyeler) token tasarrufu amacıyla ilk prompta eklenmemiştir.
 Eğer kullanıcı panodaki kartlar, sütunlar veya üyeler hakkında soru sorursa, görev atamak isterse veya bir işlem yapmak isterse,
-mutlaka öncelikle "list_columns" veya "list_members" araçlarını (tool) çağırarak güncel durumu öğrenmelisin.`;
+mutlaka öncelikle "list_columns" veya "list_members" araçlarını (tool) çağırarak güncel durumu öğrenmelisin.`);
 
-  return `Sen bir Trello benzeri bir proje yönetim uygulamasının AI asistanısın.
+  const systemPersona = language === "en"
+    ? "You are the AI assistant of a Trello-like project management application."
+    : "Sen bir Trello benzeri bir proje yönetim uygulamasının AI asistanısın.";
+
+  const finalInstructions = language === "en"
+    ? `Respond to users in a concise, clear, and professional English manner. Summarize what you did when the operation is successful. IMPORTANT: Write all replies in English.`
+    : `Kullanıcılara kısa, net ve Türkçe cevap ver. İşlem başarılı olduğunda ne yaptığını özetle.`;
+
+  return `${systemPersona}
 
 Şu an seninle konuşan kullanıcı: ${userName} (rol: ${userRole})
 
@@ -956,7 +968,7 @@ Mevcut proje: "${projectName}"
 
 ${contextSection}
 
-Kullanıcılara kısa, net ve Türkçe cevap ver. İşlem başarılı olduğunda ne yaptığını özetle.`;
+${finalInstructions}`;
 }
 
 async function getBoardContext(projectId: string): Promise<string> {
@@ -1128,7 +1140,7 @@ export async function sendMessage(
     }),
     prisma.organizationMember.findFirst({
       where: { userId, organization: { projects: { some: { id: projectId } } } },
-      select: { role: true, user: { select: { name: true } } },
+      select: { role: true, user: { select: { name: true, language: true } } },
     }),
     needsContext ? getBoardContext(projectId) : Promise.resolve(""),
   ]);
@@ -1140,6 +1152,7 @@ export async function sendMessage(
     boardContext,
     membership.user.name,
     membership.role as "ADMIN" | "MEMBER",
+    membership.user.language || "tr",
   );
 
   const apiMessages = [
@@ -1399,7 +1412,7 @@ Format:
 
   let parsed: any = null;
   const trimmedReply = rawReply.trim();
-  
+
   // Try extracting the JSON block between first '{' and last '}'
   const firstBrace = trimmedReply.indexOf('{');
   const lastBrace = trimmedReply.lastIndexOf('}');
@@ -1680,36 +1693,36 @@ Format:
       continue;
     }
 
-      // Kartın ve hedef sütunun bu kullanıcının erişebileceği projede olduğunu doğrula
-      const card = userCards.find(c => c.id === cardId);
-      if (!card) {
-        console.log(`[AI PUSH ANALYZER] Kart bulutunda veya kullanıcının kartları arasında bulunamadı: ${cardId}`);
-        continue;
-      }
-
-      const targetColumn = card.column.project.columns.find(col => col.id === targetColumnId);
-      if (!targetColumn) {
-        console.log(`[AI PUSH ANALYZER] Hedef sütun bulunamadı: ${targetColumnId}`);
-        continue;
-      }
-
-      // Zaten o sütundaysa taşıma
-      if (card.columnId === targetColumnId) {
-        console.log(`[AI PUSH ANALYZER] Kart zaten hedef sütunda ("${targetColumn.name}"), taşıma yapılmadı.`);
-        continue;
-      }
-
-      // Kartı taşı!
-      console.log(`[AI PUSH ANALYZER] Kart taşınıyor! Kart: "${card.title}" -> Hedef Sütun: "${targetColumn.name}" (Gerekçe: ${reason})`);
-      await cardService.updateCard(cardId, { columnId: targetColumnId }, userId);
-      movedCards.push({
-        cardId,
-        cardTitle: card.title,
-        oldColumn: card.column.name,
-        newColumn: targetColumn.name,
-        reason
-      });
+    // Kartın ve hedef sütunun bu kullanıcının erişebileceği projede olduğunu doğrula
+    const card = userCards.find(c => c.id === cardId);
+    if (!card) {
+      console.log(`[AI PUSH ANALYZER] Kart bulutunda veya kullanıcının kartları arasında bulunamadı: ${cardId}`);
+      continue;
     }
+
+    const targetColumn = card.column.project.columns.find(col => col.id === targetColumnId);
+    if (!targetColumn) {
+      console.log(`[AI PUSH ANALYZER] Hedef sütun bulunamadı: ${targetColumnId}`);
+      continue;
+    }
+
+    // Zaten o sütundaysa taşıma
+    if (card.columnId === targetColumnId) {
+      console.log(`[AI PUSH ANALYZER] Kart zaten hedef sütunda ("${targetColumn.name}"), taşıma yapılmadı.`);
+      continue;
+    }
+
+    // Kartı taşı!
+    console.log(`[AI PUSH ANALYZER] Kart taşınıyor! Kart: "${card.title}" -> Hedef Sütun: "${targetColumn.name}" (Gerekçe: ${reason})`);
+    await cardService.updateCard(cardId, { columnId: targetColumnId }, userId);
+    movedCards.push({
+      cardId,
+      cardTitle: card.title,
+      oldColumn: card.column.name,
+      newColumn: targetColumn.name,
+      reason
+    });
+  }
 
   return { movedCards };
 }

@@ -239,6 +239,7 @@ const PROFILE_SELECT = {
   linkedinUrl: true,
   expertiseAreas: true,
   languages: true,
+  language: true,
   aiProvider: true,
   aiApiKey: true, // sadece varlik kontrolu icin secilir, cevapta hicbir zaman geri donmez
   aiBaseUrl: true,
@@ -278,6 +279,7 @@ export async function updateProfile(userId: string, input: UpdateProfileInput) {
       ...(input.linkedinUrl !== undefined && { linkedinUrl: input.linkedinUrl }),
       ...(input.expertiseAreas !== undefined && { expertiseAreas: input.expertiseAreas }),
       ...(input.languages !== undefined && { languages: input.languages }),
+      ...(input.language !== undefined && { language: input.language || "tr" }),
       ...(input.aiProvider !== undefined && { aiProvider: input.aiProvider }),
       // Bos string/null = "anahtari kaldir", dolu string = sifrelenip saklanir.
       // Frontend "degistirmedim" durumunda bu alani hic gondermiyor (undefined
