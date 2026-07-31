@@ -1,7 +1,89 @@
 import { prisma } from "@/lib/prisma";
 import { NotFoundError, ForbiddenError, ValidationError } from "@/utils/errors";
 import { broadcastToProject, SocketEvents } from "@/server/socket";
+import { logActivity } from "@/services/activity.service";
 import type { CreateSprintInput, UpdateSprintInput } from "@/schemas/sprint.schema";
+
+const ROLLOVER_PRIORITIES = ["URGENT", "HIGH"] as const;
+
+// Sprint COMPLETED'e gecince bitmemis (Done olmayan) kartlara ne olacagini
+// belirler (Linear'in "Cycle Autopilot" ozelliginden esinlenildi):
+// URGENT/HIGH kartlar varsa bir sonraki PLANNED sprint'e otomatik tasinir,
+// yoksa (veya MEDIUM/LOW ise) sprint'ten cikarilip backlog'a (sprintsiz) düşer.
+// Boylece "tamamlandi" dedikten sonra bitmeyen isler sessizce kapanmis bir
+// sprint'e bagli halde asili kalmaz.
+async function rolloverIncompleteCards(sprintId: string, projectId: string, userId: string) {
+  const incompleteCards = await prisma.card.findMany({
+    where: { sprintId, column: { isDone: false } },
+    select: {
+      id: true,
+      title: true,
+      description: true,
+      columnId: true,
+      priority: true,
+      dueDate: true,
+      position: true,
+      parentCardId: true,
+      assignees: { include: { user: { select: { id: true, name: true } } } },
+    },
+  });
+
+  if (incompleteCards.length === 0) {
+    return { rolledOverCount: 0, backlogCount: 0, nextSprintId: null, nextSprintName: null };
+  }
+
+  const nextSprint = await prisma.sprint.findFirst({
+    where: { projectId, status: "PLANNED", id: { not: sprintId } },
+    orderBy: { createdAt: "asc" },
+  });
+
+  let rolledOverCount = 0;
+  let backlogCount = 0;
+
+  for (const card of incompleteCards) {
+    const shouldRollover = ROLLOVER_PRIORITIES.includes(card.priority as (typeof ROLLOVER_PRIORITIES)[number]) && nextSprint;
+    const newSprintId = shouldRollover ? nextSprint!.id : null;
+
+    const updated = await prisma.card.update({
+      where: { id: card.id },
+      data: { sprintId: newSprintId },
+    });
+
+    if (shouldRollover) rolledOverCount += 1;
+    else backlogCount += 1;
+
+    broadcastToProject(projectId, SocketEvents.CARD_UPDATED, {
+      id: card.id,
+      title: card.title,
+      description: card.description ?? undefined,
+      columnId: card.columnId,
+      projectId,
+      assignees: card.assignees.map((a) => ({ id: a.user.id, name: a.user.name })),
+      priority: card.priority,
+      dueDate: card.dueDate?.toISOString() ?? undefined,
+      position: card.position,
+      sprintId: updated.sprintId,
+      parentCardId: card.parentCardId,
+    });
+
+    await logActivity({
+      projectId,
+      userId,
+      type: "CARD_UPDATED",
+      cardId: card.id,
+      data: shouldRollover
+        ? { sprintRollover: "next", nextSprintName: nextSprint!.name }
+        : { sprintRollover: "backlog" },
+    });
+  }
+
+  return {
+    rolledOverCount,
+    backlogCount,
+    nextSprintId: nextSprint?.id ?? null,
+    nextSprintName: nextSprint?.name ?? null,
+  };
+}
 
 async function checkProjectAccess(projectId: string, userId: string) {
   const project = await prisma.project.findUnique({
@@ -89,7 +171,12 @@ export async function updateSprint(sprintId: string, input: UpdateSprintInput, u
     status: updated.status,
   });
 
-  return updated;
+  let rollover: Awaited<ReturnType<typeof rolloverIncompleteCards>> | null = null;
+  if (input.status === "COMPLETED" && sprint.status !== "COMPLETED") {
+    rollover = await rolloverIncompleteCards(sprintId, sprint.projectId, userId);
+  }
+
+  return { ...updated, rollover };
 }
 
 export async function deleteSprint(sprintId: string, userId: string) {
