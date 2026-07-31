@@ -3,6 +3,7 @@ import { NotFoundError, ForbiddenError, ConflictError, ValidationError } from "@
 import * as notificationService from "@/services/notification.service";
 import { logActivity } from "@/services/activity.service";
 import { broadcastToProject, SocketEvents } from "@/server/socket";
+import type { DependencyRelationType } from "@prisma/client";
 
 async function checkCardAccess(cardId: string, userId: string) {
   const card = await prisma.card.findUnique({
@@ -30,6 +31,9 @@ async function checkCardAccess(cardId: string, userId: string) {
 // blockerId'den blockedId'ye yeni bir "blocker -> blocked" kenari eklersek
 // dongu olusur mu? blockedId'den baslayip mevcut "blocking" kenarlarini takip
 // ederek blockerId'ye ulasilabiliyorsa, yeni kenar bir dongu kapatir.
+// Sadece BLOCKS tipi kenarlar gercek bir "bekleme" iliskisi kurdugu icin
+// dongu grafigi de sadece bu tip kenarlardan olusur - RELATES_TO/DUPLICATES/
+// CLONES kenarlari burada goz ardi edilir.
 async function wouldCreateCycle(blockerId: string, blockedId: string): Promise<boolean> {
   if (blockerId === blockedId) return true;
 
@@ -40,7 +44,7 @@ async function wouldCreateCycle(blockerId: string, blockedId: string): Promise<b
     if (queue.includes(blockerId)) return true;
 
     const deps = await prisma.cardDependency.findMany({
-      where: { blockerId: { in: queue } },
+      where: { blockerId: { in: queue }, relationType: "BLOCKS" },
       select: { blockedId: true },
     });
 
@@ -57,7 +61,12 @@ async function wouldCreateCycle(blockerId: string, blockedId: string): Promise<b
   return false;
 }
 
-export async function addDependency(blockedId: string, blockerId: string, userId: string) {
+export async function addDependency(
+  blockedId: string,
+  blockerId: string,
+  userId: string,
+  relationType: DependencyRelationType = "BLOCKS",
+) {
   const { projectId } = await checkCardAccess(blockedId, userId);
   const blockerAccess = await checkCardAccess(blockerId, userId);
 
@@ -66,20 +75,30 @@ export async function addDependency(blockedId: string, blockerId: string, userId
   }
 
   if (blockerId === blockedId) {
-    throw new ValidationError("Bir kart kendisini bloklayamaz");
+    throw new ValidationError("Bir kart kendisiyle ilişkilendirilemez");
   }
 
   const existing = await prisma.cardDependency.findUnique({
     where: { blockerId_blockedId: { blockerId, blockedId } },
   });
-  if (existing) throw new ConflictError("Bu bağımlılık zaten ekli");
+  if (existing) throw new ConflictError("Bu ilişki zaten ekli");
 
-  if (await wouldCreateCycle(blockerId, blockedId)) {
+  // RELATES_TO/DUPLICATES/CLONES yonsuz kabul edilir: A->B varken B->A'nin
+  // tekrar eklenmesi ayni iliskinin mukerreri olur. BLOCKS yonlu oldugu icin
+  // (A B'yi bloklar != B A'yi bloklar) bu kontrole tabi degil.
+  if (relationType !== "BLOCKS") {
+    const reverse = await prisma.cardDependency.findUnique({
+      where: { blockerId_blockedId: { blockerId: blockedId, blockedId: blockerId } },
+    });
+    if (reverse) throw new ConflictError("Bu ilişki zaten ekli");
+  }
+
+  if (relationType === "BLOCKS" && (await wouldCreateCycle(blockerId, blockedId))) {
     throw new ValidationError("Bu bağımlılık döngü oluşturur");
   }
 
   const dependency = await prisma.cardDependency.create({
-    data: { blockerId, blockedId },
+    data: { blockerId, blockedId, relationType },
     include: {
       blocker: { select: { id: true, title: true } },
       blocked: { select: { id: true, title: true } },
@@ -90,6 +109,7 @@ export async function addDependency(blockedId: string, blockerId: string, userId
     projectId,
     blockedId,
     blockerId,
+    relationType,
   });
 
   await logActivity({
@@ -126,7 +146,7 @@ export async function removeDependency(blockedId: string, blockerId: string, use
 // atanan kişilerine (yoksa oluşturana) BLOCKER_RESOLVED bildirimi gönder.
 export async function notifyBlockerResolved(blockerCardId: string, blockerTitle: string) {
   const dependents = await prisma.cardDependency.findMany({
-    where: { blockerId: blockerCardId },
+    where: { blockerId: blockerCardId, relationType: "BLOCKS" },
     select: {
       blocked: {
         select: {

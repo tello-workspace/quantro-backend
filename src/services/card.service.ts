@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { NotFoundError, ForbiddenError } from "@/utils/errors";
+import { NotFoundError, ForbiddenError, ValidationError } from "@/utils/errors";
 import * as notificationService from "@/services/notification.service";
 import { notifyBlockerResolved } from "@/services/dependency.service";
 import { logActivity } from "@/services/activity.service";
@@ -47,6 +47,38 @@ async function getNextPosition(columnId: string): Promise<number> {
   return (lastCard?.position ?? 0) + 1;
 }
 
+// parentCardId ayni projedeki bir karta mi isaret ediyor ve dongu olusturmuyor mu?
+// (kartin kendi alt-gorevini kendine ebeveyn secmesi gibi bir A->B->A durumu)
+async function validateParentCard(projectId: string, cardId: string | undefined, parentCardId: string) {
+  const cycleError = () => new ValidationError("Bir kart kendi alt görevinin altına bağlanamaz");
+
+  if (cardId && parentCardId === cardId) {
+    throw cycleError();
+  }
+
+  const parent = await prisma.card.findUnique({
+    where: { id: parentCardId },
+    select: { parentCardId: true, column: { select: { projectId: true } } },
+  });
+  if (!parent || parent.column.projectId !== projectId) {
+    throw new NotFoundError("Üst kart");
+  }
+
+  if (!cardId) return;
+
+  // parentCardId'den yukari dogru zincir takip edilir - eger bu zincirde
+  // cardId'ye rastlanirsa, yeni ebeveynlik bir dongu olustururdu.
+  let current = parent.parentCardId;
+  const visited = new Set<string>([parentCardId]);
+  while (current) {
+    if (current === cardId) throw cycleError();
+    if (visited.has(current)) break; // guvenlik: sonsuz donguye girme
+    visited.add(current);
+    const next = await prisma.card.findUnique({ where: { id: current }, select: { parentCardId: true } });
+    current = next?.parentCardId ?? null;
+  }
+}
+
 // Atanan kişilerin hepsinin organizasyon üyesi olduğunu doğrula
 async function validateAssignees(columnId: string, assigneeIds: string[]) {
   if (assigneeIds.length === 0) return;
@@ -79,6 +111,14 @@ export async function createCard(columnId: string, input: CreateCardInput, userI
   const assigneeIds = input.assigneeIds ?? [];
   await validateAssignees(columnId, assigneeIds);
 
+  if (input.sprintId) {
+    const sprint = await prisma.sprint.findUnique({ where: { id: input.sprintId }, select: { projectId: true } });
+    if (!sprint || sprint.projectId !== projectId) throw new NotFoundError("Sprint");
+  }
+  if (input.parentCardId) {
+    await validateParentCard(projectId, undefined, input.parentCardId);
+  }
+
   const position = input.position ?? (await getNextPosition(columnId));
 
   const card = await prisma.card.create({
@@ -92,6 +132,8 @@ export async function createCard(columnId: string, input: CreateCardInput, userI
       dueDate: input.dueDate ? new Date(input.dueDate) : undefined,
       position,
       lastActivityAt: new Date(),
+      sprintId: input.sprintId ?? undefined,
+      parentCardId: input.parentCardId ?? undefined,
       assignees: {
         create: assigneeIds.map((id) => ({ userId: id })),
       },
@@ -118,6 +160,8 @@ export async function createCard(columnId: string, input: CreateCardInput, userI
     priority: card.priority,
     dueDate: card.dueDate?.toISOString() ?? null,
     position: card.position,
+    sprintId: card.sprintId,
+    parentCardId: card.parentCardId,
   });
 
   await logActivity({ projectId, userId, type: "CARD_CREATED", cardId: card.id });
@@ -164,6 +208,15 @@ export async function getCardById(cardId: string, userId: string) {
       blockedBy: {
         include: { blocker: { select: { id: true, title: true } } },
       },
+      sprint: { select: { id: true, name: true, status: true } },
+      parent: { select: { id: true, title: true } },
+      subtasks: {
+        select: { id: true, title: true, column: { select: { isDone: true } } },
+        orderBy: { createdAt: "asc" },
+      },
+      customFieldValues: {
+        include: { field: { select: { id: true, name: true, type: true, options: true } } },
+      },
     },
   });
 
@@ -196,12 +249,22 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
     input.description !== undefined ||
     input.priority !== undefined ||
     input.storyPoints !== undefined ||
-    input.dueDate !== undefined;
+    input.dueDate !== undefined ||
+    input.sprintId !== undefined ||
+    input.parentCardId !== undefined;
 
   if (icerikAlanlariDegisiyor && role !== "ADMIN") {
     throw new ForbiddenError(
       "Kart içeriğini sadece adminler düzenleyebilir. Değişiklik talebi gönderebilirsiniz.",
     );
+  }
+
+  if (input.sprintId) {
+    const sprint = await prisma.sprint.findUnique({ where: { id: input.sprintId }, select: { projectId: true } });
+    if (!sprint || sprint.projectId !== projectId) throw new NotFoundError("Sprint");
+  }
+  if (input.parentCardId) {
+    await validateParentCard(projectId, cardId, input.parentCardId);
   }
 
   // Kolon değişikliği varsa hedef kolonun da erişilebilir olduğunu kontrol et
@@ -233,6 +296,8 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
   if (input.priority !== undefined) updateData.priority = input.priority as Priority;
   if (input.storyPoints !== undefined) updateData.storyPoints = input.storyPoints;
   if (input.dueDate !== undefined) updateData.dueDate = input.dueDate ? new Date(input.dueDate) : null;
+  if (input.sprintId !== undefined) updateData.sprintId = input.sprintId;
+  if (input.parentCardId !== undefined) updateData.parentCardId = input.parentCardId;
   if (input.columnId !== undefined) updateData.columnId = input.columnId;
   if (input.position !== undefined) updateData.position = input.position;
   if (input.assigneeIds !== undefined) {
@@ -257,7 +322,7 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
     updateData.lastActivityAt = new Date();
   }
 
-  const updated = await prisma.card.update({
+  let updated = await prisma.card.update({
     where: { id: cardId },
     data: updateData,
     include: assigneeInclude,
@@ -307,6 +372,18 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
       columnId: updated.columnId,
     });
 
+    // Otomasyon kurallari ayni karti (ornegin ASSIGN_USER ile assignees'i)
+    // degistirmis olabilir ve kendi dogru card:updated yayinini az once yapti.
+    // Asagidaki kosulsuz son yayin ve HTTP yaniti hala yukaridaki ESKI
+    // `updated` snapshot'ini kullansaydi, otomasyonun yayinladigi guncel veriyi
+    // hemen ardindan eski veriyle ezip herkesin panosunda (ozellikle bu istegi
+    // atan kullanicinin kendi sekmesinde, HTTP yaniti da bu eski veriyi
+    // tasidigi icin) sayfa yenilenene kadar gorunmez hale getirirdi.
+    updated = await prisma.card.findUniqueOrThrow({
+      where: { id: cardId },
+      include: assigneeInclude,
+    });
+
     await notifyWatchers(
       updated.id,
       userId,
@@ -344,6 +421,8 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
     priority: updated.priority,
     dueDate: updated.dueDate?.toISOString() ?? null,
     position: updated.position,
+    sprintId: updated.sprintId,
+    parentCardId: updated.parentCardId,
   });
 
   return updated;

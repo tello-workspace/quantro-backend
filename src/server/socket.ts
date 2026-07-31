@@ -68,6 +68,14 @@ export interface ServerSocketEvents {
   [SocketEvents.DEPENDENCY_ADDED]: (data: DependencyPayload) => void;
   [SocketEvents.DEPENDENCY_REMOVED]: (data: DependencyPayload) => void;
 
+  // Sprint events
+  [SocketEvents.SPRINT_CREATED]: (data: SprintPayload) => void;
+  [SocketEvents.SPRINT_UPDATED]: (data: SprintPayload) => void;
+  [SocketEvents.SPRINT_DELETED]: (data: { id: string; projectId: string }) => void;
+
+  // Ek alan (custom field) events
+  [SocketEvents.CUSTOM_FIELD_CHANGED]: (data: { projectId: string; cardId?: string }) => void;
+
   // Activity events
   [SocketEvents.ACTIVITY_NEW]: (activity: ActivityPayload) => void;
 
@@ -145,6 +153,14 @@ export enum SocketEvents {
   DEPENDENCY_ADDED = "dependency:added",
   DEPENDENCY_REMOVED = "dependency:removed",
 
+  // Sprint
+  SPRINT_CREATED = "sprint:created",
+  SPRINT_UPDATED = "sprint:updated",
+  SPRINT_DELETED = "sprint:deleted",
+
+  // Ek alan (custom field)
+  CUSTOM_FIELD_CHANGED = "custom_field:changed",
+
   // Activity
   ACTIVITY_NEW = "activity:new",
 
@@ -205,6 +221,8 @@ export interface CardPayload {
   priority: string;
   dueDate?: string;
   position: number;
+  sprintId?: string | null;
+  parentCardId?: string | null;
 }
 
 export interface CardMovedPayload {
@@ -281,6 +299,14 @@ export interface DependencyPayload {
   projectId: string;
   blockedId: string;
   blockerId: string;
+  relationType?: string;
+}
+
+export interface SprintPayload {
+  id: string;
+  projectId: string;
+  name: string;
+  status: string;
 }
 
 export interface ActivityPayload {

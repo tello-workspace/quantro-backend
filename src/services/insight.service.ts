@@ -203,3 +203,113 @@ export async function getWeeklySummary(projectId: string, userId: string) {
     pendingStaleCount,
   };
 }
+
+function toDayKey(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+function eachDay(start: Date, end: Date): Date[] {
+  const days: Date[] = [];
+  const cursor = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+  const last = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+  while (cursor <= last) {
+    days.push(new Date(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return days;
+}
+
+// Sprint burndown: CARD_COMPLETED aktivitesi (card.service.ts'te kart Done
+// sutununa tasininca loglanir) kullanilarak her gun icin "kalan story point"
+// hesaplanir. Gercek gunluk anlik goruntu tutulmadigi icin geriye donuk
+// yeniden insa edilir - tamamlanma aninin GERCEK zaman damgasina dayandigi
+// icin bu yaklasik degil, dogru bir seridir.
+export async function getSprintBurndown(sprintId: string, userId: string) {
+  const sprint = await prisma.sprint.findUnique({ where: { id: sprintId } });
+  if (!sprint) throw new NotFoundError("Sprint");
+  await checkProjectAccess(sprint.projectId, userId);
+
+  const cards = await prisma.card.findMany({
+    where: { sprintId },
+    select: { id: true, storyPoints: true },
+  });
+  const totalPoints = cards.reduce((sum, c) => sum + (c.storyPoints ?? 1), 0);
+  const cardPoints = new Map(cards.map((c) => [c.id, c.storyPoints ?? 1]));
+
+  const start = sprint.startDate ?? sprint.createdAt;
+  const end = sprint.endDate ?? new Date();
+
+  const completions = await prisma.activity.findMany({
+    where: { type: "CARD_COMPLETED", cardId: { in: cards.map((c) => c.id) } },
+    select: { cardId: true, createdAt: true },
+    orderBy: { createdAt: "asc" },
+  });
+
+  const completedByDay = new Map<string, number>();
+  for (const activity of completions) {
+    if (!activity.cardId) continue;
+    const key = toDayKey(activity.createdAt);
+    completedByDay.set(key, (completedByDay.get(key) ?? 0) + (cardPoints.get(activity.cardId) ?? 1));
+  }
+
+  const days = eachDay(start, end);
+  let cumulativeCompleted = 0;
+  const idealStep = days.length > 1 ? totalPoints / (days.length - 1) : totalPoints;
+
+  const series = days.map((day, i) => {
+    cumulativeCompleted += completedByDay.get(toDayKey(day)) ?? 0;
+    return {
+      date: toDayKey(day),
+      remaining: Math.max(totalPoints - cumulativeCompleted, 0),
+      ideal: Math.max(totalPoints - idealStep * i, 0),
+    };
+  });
+
+  return { sprintId, totalPoints, startDate: start.toISOString(), endDate: end.toISOString(), series };
+}
+
+// Basitlestirilmis "kumulatif akis": her gun icin o gune kadar OLUSTURULAN
+// (CARD_CREATED aktivitesi) ve o gune kadar TAMAMLANAN (CARD_COMPLETED)
+// kartlarin kumulatif toplami. Jira'nin sutun-sutun tam CFD'sinden farkli
+// olarak sadece "girdi" ve "cikti" bantlarini gosterir - ikisi arasindaki
+// fark o anki aktif/devam eden is miktarini temsil eder.
+export async function getCumulativeFlow(projectId: string, userId: string, days: number = 14) {
+  await checkProjectAccess(projectId, userId);
+
+  const end = new Date();
+  const start = new Date(end.getTime() - (days - 1) * 24 * 60 * 60 * 1000);
+
+  const activities = await prisma.activity.findMany({
+    where: {
+      projectId,
+      type: { in: ["CARD_CREATED", "CARD_COMPLETED"] },
+      createdAt: { gte: new Date(start.getFullYear(), start.getMonth(), start.getDate()) },
+    },
+    select: { type: true, createdAt: true },
+    orderBy: { createdAt: "asc" },
+  });
+
+  // Baslangictan (start) once olusmus, hala acik olan kartlar icin taban
+  // deger: toplam kart sayisi - bu araliktaki yeni olusturmalar.
+  const totalCardsNow = await prisma.card.count({ where: { column: { projectId } } });
+  const createdInRange = activities.filter((a) => a.type === "CARD_CREATED").length;
+  const completedInRange = activities.filter((a) => a.type === "CARD_COMPLETED").length;
+  const baselineCreated = Math.max(totalCardsNow - createdInRange, 0);
+  const baselineCompleted = Math.max(
+    (await prisma.card.count({ where: { column: { projectId, isDone: true } } })) - completedInRange,
+    0,
+  );
+
+  const dayList = eachDay(start, end);
+  let createdCum = baselineCreated;
+  let completedCum = baselineCompleted;
+
+  const series = dayList.map((day) => {
+    const key = toDayKey(day);
+    createdCum += activities.filter((a) => a.type === "CARD_CREATED" && toDayKey(a.createdAt) === key).length;
+    completedCum += activities.filter((a) => a.type === "CARD_COMPLETED" && toDayKey(a.createdAt) === key).length;
+    return { date: key, created: createdCum, completed: completedCum, active: Math.max(createdCum - completedCum, 0) };
+  });
+
+  return { projectId, series };
+}

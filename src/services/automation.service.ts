@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { NotFoundError, ForbiddenError } from "@/utils/errors";
 import * as notificationService from "@/services/notification.service";
+import { logActivity } from "@/services/activity.service";
 import { broadcastToProject, SocketEvents } from "@/server/socket";
 import type { AutomationRule, AutomationTrigger } from "@prisma/client";
 import type { CreateAutomationRuleInput, UpdateAutomationRuleInput } from "@/schemas/automation.schema";
@@ -41,6 +42,8 @@ export async function createAutomationRule(projectId: string, input: CreateAutom
       actionColumnId: input.actionColumnId,
       actionUserId: input.actionUserId,
       actionMessage: input.actionMessage,
+      scheduleDayOfWeek: input.scheduleDayOfWeek,
+      dueSoonDays: input.dueSoonDays,
       createdById: userId,
     },
   });
@@ -186,6 +189,13 @@ async function executeAction(rule: AutomationRule, cardId: string) {
     }
     case "SEND_NOTIFICATION": {
       if (!rule.actionUserId || !rule.actionMessage) return;
+      // Ayni karta ayni mesajla okunmamis bir bildirim zaten varsa tekrar
+      // olusturma - CARD_DUE_SOON tetikleyicisi gece taramasinda her calistiginda
+      // ayni karti tekrar tekrar isaretleyebiliyor, bu spam'i onler.
+      const existing = await prisma.notification.findFirst({
+        where: { userId: rule.actionUserId, type: "AUTOMATION", message: rule.actionMessage, cardId, read: false },
+      });
+      if (existing) return;
       await notificationService.createNotification({
         userId: rule.actionUserId,
         type: "AUTOMATION",
@@ -195,4 +205,94 @@ async function executeAction(rule: AutomationRule, cardId: string) {
       return;
     }
   }
+}
+
+// SCHEDULED tetikleyicisi kartlara degil dogrudan kurala bagli oldugu icin
+// (henuz var olmayan bir kart olusturuyor) executeAction'in cardId gerektiren
+// imzasini kullanamaz - ayri bir yol izler.
+async function executeCreateCardAction(rule: AutomationRule) {
+  if (rule.actionType !== "CREATE_CARD") return;
+  if (!rule.actionColumnId) return;
+
+  const column = await prisma.column.findUnique({ where: { id: rule.actionColumnId } });
+  if (!column) return; // kolon silinmis - sessizce atla
+
+  const lastCard = await prisma.card.findFirst({
+    where: { columnId: rule.actionColumnId },
+    orderBy: { position: "desc" },
+    select: { position: true },
+  });
+  const position = (lastCard?.position ?? 0) + 1;
+
+  const card = await prisma.card.create({
+    data: {
+      columnId: rule.actionColumnId,
+      title: rule.actionMessage ?? rule.name,
+      creatorId: rule.createdById,
+      position,
+      lastActivityAt: new Date(),
+    },
+  });
+
+  broadcastToProject(rule.projectId, SocketEvents.CARD_CREATED, {
+    id: card.id,
+    title: card.title,
+    description: card.description ?? undefined,
+    columnId: card.columnId,
+    projectId: rule.projectId,
+    assignees: [],
+    priority: card.priority,
+    dueDate: undefined,
+    position: card.position,
+  });
+
+  await logActivity({ projectId: rule.projectId, userId: rule.createdById, type: "CARD_CREATED", cardId: card.id });
+}
+
+// Gece taramasinda (scan.service.ts -> runNightlyScan) cagrilir. Iki bagimsiz
+// tetikleyici turunu isler: SCHEDULED (gunun gunune gore, kart-bagimsiz aksiyon)
+// ve CARD_DUE_SOON (teslim tarihi yaklasan, henuz Done olmayan her kart icin
+// normal executeAction akisini calistirir).
+export async function runScheduledAndDueSoonAutomations() {
+  const dayOfWeek = new Date().getDay();
+
+  const scheduledRules = await prisma.automationRule.findMany({
+    where: {
+      trigger: "SCHEDULED",
+      isActive: true,
+      OR: [{ scheduleDayOfWeek: dayOfWeek }, { scheduleDayOfWeek: null }],
+    },
+  });
+  for (const rule of scheduledRules) {
+    try {
+      await executeCreateCardAction(rule);
+    } catch (error) {
+      console.error(`[automation] scheduled "${rule.name}" kurali calisirken hata:`, error);
+    }
+  }
+
+  const dueSoonRules = await prisma.automationRule.findMany({
+    where: { trigger: "CARD_DUE_SOON", isActive: true, dueSoonDays: { not: null } },
+  });
+  for (const rule of dueSoonRules) {
+    if (rule.dueSoonDays == null) continue;
+    const now = new Date();
+    const threshold = new Date(now.getTime() + rule.dueSoonDays * 24 * 60 * 60 * 1000);
+    const dueSoonCards = await prisma.card.findMany({
+      where: {
+        column: { projectId: rule.projectId, isDone: false },
+        dueDate: { gte: now, lte: threshold },
+      },
+      select: { id: true },
+    });
+    for (const card of dueSoonCards) {
+      try {
+        await executeAction(rule, card.id);
+      } catch (error) {
+        console.error(`[automation] due-soon "${rule.name}" kurali calisirken hata:`, error);
+      }
+    }
+  }
+
+  return { scheduledRulesRun: scheduledRules.length, dueSoonRulesChecked: dueSoonRules.length };
 }

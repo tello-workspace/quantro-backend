@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import * as notificationService from "@/services/notification.service";
+import { runScheduledAndDueSoonAutomations } from "@/services/automation.service";
 import type { NotificationType } from "@prisma/client";
 
 const STALE_DAYS = 7;
@@ -105,15 +106,17 @@ export async function scanWipExceeded() {
 }
 
 export async function runNightlyScan() {
-  const [stale, deadlineRisk, wipExceeded] = await Promise.all([
+  const [stale, deadlineRisk, wipExceeded, automations] = await Promise.all([
     scanStaleCards(),
     scanDeadlineRisk(),
     scanWipExceeded(),
+    runScheduledAndDueSoonAutomations(),
   ]);
 
   console.log(
-    `[scan] stale=${stale} deadlineRisk=${deadlineRisk} wipExceeded=${wipExceeded}`,
+    `[scan] stale=${stale} deadlineRisk=${deadlineRisk} wipExceeded=${wipExceeded} ` +
+      `scheduledRulesRun=${automations.scheduledRulesRun} dueSoonRulesChecked=${automations.dueSoonRulesChecked}`,
   );
 
-  return { stale, deadlineRisk, wipExceeded };
+  return { stale, deadlineRisk, wipExceeded, ...automations };
 }

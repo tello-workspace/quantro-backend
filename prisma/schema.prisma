@@ -62,6 +62,8 @@ enum NotificationType {
 enum AutomationTrigger {
   CARD_MOVED_TO_COLUMN // kart belirli bir kolona tasininca
   CARD_CREATED // kart olusturulunca (belirli bir kolonda veya herhangi birinde)
+  SCHEDULED // gece taramasi (03:00) sirasinda gunun gunune gore tetiklenir
+  CARD_DUE_SOON // teslim tarihine dueSoonDays gun kala, henuz Done olmayan kartlar icin
 }
 
 enum AutomationActionType {
@@ -69,6 +71,32 @@ enum AutomationActionType {
   MOVE_TO_COLUMN
   ASSIGN_USER
   SEND_NOTIFICATION
+  CREATE_CARD // SCHEDULED tetikleyicisiyle: actionColumnId'ye actionMessage basligiyla yeni kart acar
+}
+
+enum SprintStatus {
+  PLANNED
+  ACTIVE
+  COMPLETED
+}
+
+enum CustomFieldType {
+  TEXT
+  NUMBER
+  DATE
+  SELECT
+  CHECKBOX
+}
+
+// CardDependency.relationType icin: sadece BLOCKS yonlu bekleme anlami tasir
+// ve dongu kontrolune tabidir. Digerleri (RELATES_TO/DUPLICATES/CLONES) salt
+// bilgilendirme amaclidir, dependency.service.ts'teki wouldCreateCycle
+// kontrolu bunlar icin calismaz.
+enum DependencyRelationType {
+  BLOCKS
+  RELATES_TO
+  DUPLICATES
+  CLONES
 }
 
 // Uyeler yapisal degisiklikleri dogrudan yapmaz; talep olustururlar.
@@ -115,6 +143,10 @@ model User {
   linkedinUrl     String?
   expertiseAreas  String[] @default([])
   languages       String[] @default([])
+  // UI dil tercihi (tr/en vb.) - "languages" (konustugu diller) alanindan
+  // farkli. Migration'i bu repoda olusturulmadan dogrudan DB'ye uygulanmis
+  // (2026-07-31), burada ve migrations/ klasorunde geriye donuk eklendi.
+  language        String   @default("tr")
 
   // User-specific AI configurations
   aiProvider      String?
@@ -206,10 +238,16 @@ model AutomationRule {
   actionLabelId   String? // ADD_LABEL
   actionColumnId  String? // MOVE_TO_COLUMN
   actionUserId    String? // ASSIGN_USER / SEND_NOTIFICATION hedefi
-  actionMessage   String? // SEND_NOTIFICATION icin ozel mesaj
+  actionMessage   String? // SEND_NOTIFICATION icin ozel mesaj, CREATE_CARD icin yeni kartin basligi
   isActive        Boolean               @default(true)
   createdById     String
   createdAt       DateTime              @default(now())
+
+  // SCHEDULED tetikleyici: gece taramasi (her gun 03:00) calistiginda gunun
+  // gunu eslesirse (0=Pazar..6=Cumartesi) tetiklenir; null = her gun.
+  scheduleDayOfWeek Int?
+  // CARD_DUE_SOON tetikleyici: teslim tarihine kac gun kala tetiklenecegi
+  dueSoonDays       Int?
 
   project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   createdBy User    @relation(fields: [createdById], references: [id])
@@ -313,6 +351,57 @@ model Project {
   changeRequests ChangeRequest[]
   automationRules AutomationRule[]
   cardTemplates   CardTemplate[]
+  sprints         Sprint[]
+  customFields    CustomFieldDefinition[]
+}
+
+// Zaman kutulu iterasyon (Jira Sprint). Kartlar opsiyonel olarak bir sprint'e
+// baglanir - sprint'e hic kart baglanmadan da board normal Kanban gibi
+// calismaya devam eder, bu yuzden mevcut projelerde geriye donuk kirilma yok.
+model Sprint {
+  id        String       @id @default(cuid())
+  projectId String
+  name      String
+  goal      String?
+  status    SprintStatus @default(PLANNED)
+  startDate DateTime?
+  endDate   DateTime?
+  createdAt DateTime     @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  cards   Card[]
+
+  @@index([projectId, status])
+}
+
+// Proje bazli ek kart alani tanimi (Jira Custom Fields). Deger, tipi ne
+// olursa olsun String olarak saklanir; CHECKBOX icin "true"/"false", NUMBER
+// icin sayinin string hali - parse/format sorumlulugu servis katmaninda.
+model CustomFieldDefinition {
+  id        String          @id @default(cuid())
+  projectId String
+  name      String
+  type      CustomFieldType
+  options   String[]        @default([]) // sadece SELECT tipi icin secenek listesi
+  position  Float           @default(0)
+  createdAt DateTime        @default(now())
+
+  project Project                @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  values  CardCustomFieldValue[]
+
+  @@unique([projectId, name])
+  @@index([projectId])
+}
+
+model CardCustomFieldValue {
+  cardId  String
+  fieldId String
+  value   String?
+
+  card  Card                  @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  field CustomFieldDefinition @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+
+  @@id([cardId, fieldId])
 }
 
 model Column {
@@ -344,23 +433,35 @@ model Card {
   // karta dokunan her işlem (taşıma, yorum, düzenleme, atama) bunu now() yapar.
   // Gece cron'u: lastActivityAt < now-7gün && column.isDone == false → stale
 
+  sprintId String? // opsiyonel: bagli oldugu iterasyon (Jira Sprint benzeri)
+
+  // Epic/alt-gorev hiyerarsisi (Jira Epic->Story). CardDependency'deki
+  // blocker/blocked "sira" iliskisinden farkli olarak bu bir "aittir" iliskisi.
+  parentCardId String?
+
   column  Column @relation(fields: [columnId], references: [id], onDelete: Cascade)
   creator User   @relation("CardCreator", fields: [creatorId], references: [id])
+  sprint  Sprint? @relation(fields: [sprintId], references: [id], onDelete: SetNull)
+  parent  Card?   @relation("CardParent", fields: [parentCardId], references: [id], onDelete: SetNull)
 
-  comments       Comment[]
-  labels         CardLabel[]
-  assignees      CardAssignee[]
-  blocking       CardDependency[] @relation("Blocker") // bu kartın blokladıkları
-  blockedBy      CardDependency[] @relation("Blocked") // bu kartı bloklayanlar
-  activities     Activity[]
-  notifications  Notification[]
-  changeRequests ChangeRequest[]
-  attachments    CardAttachment[]
-  checklistItems ChecklistItem[]
-  watchers       CardWatcher[]
+  comments          Comment[]
+  labels            CardLabel[]
+  assignees         CardAssignee[]
+  blocking          CardDependency[] @relation("Blocker") // bu kartın blokladıkları
+  blockedBy         CardDependency[] @relation("Blocked") // bu kartı bloklayanlar
+  activities        Activity[]
+  notifications     Notification[]
+  changeRequests    ChangeRequest[]
+  attachments       CardAttachment[]
+  checklistItems    ChecklistItem[]
+  watchers          CardWatcher[]
+  subtasks          Card[]                 @relation("CardParent")
+  customFieldValues CardCustomFieldValue[]
 
   @@index([columnId])
   @@index([lastActivityAt]) // cron taraması hızlı olsun
+  @@index([sprintId])
+  @@index([parentCardId])
 }
 
 // Coklu atama: bir kart birden fazla kisiye atanabilir (CardLabel ile ayni desen)
@@ -479,8 +580,9 @@ model ChecklistItem {
 // Eklerken serviste DÖNGÜ KONTROLÜ şart: blocker'dan blocked'a
 // zaten bir yol varsa (BFS/DFS) 400 dön, yoksa A→B→A kilitlenir.
 model CardDependency {
-  blockerId String // önce bitmesi gereken kart
-  blockedId String // onu bekleyen kart
+  blockerId    String // BLOCKS: once bitmesi gereken kart. Digerlerinde sadece "ilk secilen kart"
+  blockedId    String // BLOCKS: onu bekleyen kart. Digerlerinde sadece "ikinci secilen kart"
+  relationType DependencyRelationType @default(BLOCKS)
 
   blocker Card @relation("Blocker", fields: [blockerId], references: [id], onDelete: Cascade)
   blocked Card @relation("Blocked", fields: [blockedId], references: [id], onDelete: Cascade)
