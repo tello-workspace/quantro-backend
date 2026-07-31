@@ -23,6 +23,9 @@ export const createAutomationRuleSchema = z
     scheduleDayOfWeek: z.number().int().min(0).max(6).nullable().optional(),
     // CARD_DUE_SOON: teslim tarihine kac gun kala tetiklenecegi
     dueSoonDays: z.number().int().min(0).max(90).nullable().optional(),
+    // Kosul filtreleri: null/undefined = filtre yok
+    conditionPriority: z.enum(["LOW", "MEDIUM", "HIGH", "URGENT"]).nullable().optional(),
+    conditionLabelId: z.string().nullable().optional(),
   })
   .refine(
     (v) => v.trigger !== "CARD_MOVED_TO_COLUMN" || !!v.triggerColumnId,

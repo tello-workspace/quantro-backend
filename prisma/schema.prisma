@@ -246,6 +246,13 @@ model AutomationRule {
   // CARD_DUE_SOON tetikleyici: teslim tarihine kac gun kala tetiklenecegi
   dueSoonDays       Int?
 
+  // Kosul (condition) filtreleri: ikisi de opsiyonel, null = filtre yok.
+  // Tetikleyici gerceklestiginde kart bu kosullari saglamiyorsa aksiyon hic
+  // calismaz (ClickUp'taki kosullu otomasyondan esinlenildi - basit "VE" mantigi,
+  // ikisi de doluysa ikisi de saglanmali).
+  conditionPriority Priority?
+  conditionLabelId  String?
+
   project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   createdBy User    @relation(fields: [createdById], references: [id])
 
@@ -423,6 +430,7 @@ model Card {
   storyPoints    Int? // Jira'daki story point/tahmini efor - insight motorundaki
   // is yuku hesabinda varsa oncelik agirligi yerine bu kullanilir (daha isabetli)
   dueDate        DateTime?
+  startDate      DateTime?
   position       Float
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt

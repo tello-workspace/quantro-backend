@@ -44,6 +44,8 @@ export async function createAutomationRule(projectId: string, input: CreateAutom
       actionMessage: input.actionMessage,
       scheduleDayOfWeek: input.scheduleDayOfWeek,
       dueSoonDays: input.dueSoonDays,
+      conditionPriority: input.conditionPriority,
+      conditionLabelId: input.conditionLabelId,
       createdById: userId,
     },
   });
@@ -72,6 +74,32 @@ export async function deleteAutomationRule(ruleId: string, userId: string) {
   await prisma.automationRule.delete({ where: { id: ruleId } });
 }
 
+// Kural conditionPriority/conditionLabelId ile kisitlanmissa, karti bu
+// kosullara gore filtreler. Ikisi de doluysa ikisi de saglanmali (VE mantigi).
+// Ikisi de null ise (varsayilan) her kart eslesir - geriye donuk uyumluluk
+// bunu gerektiriyor, mevcut kurallarin hicbiri kosul tanimlamadigi icin
+// davranislari degismemeli.
+async function cardMatchesConditions(rule: AutomationRule, cardId: string): Promise<boolean> {
+  if (!rule.conditionPriority && !rule.conditionLabelId) return true;
+
+  const card = await prisma.card.findUnique({
+    where: { id: cardId },
+    select: {
+      priority: true,
+      labels: rule.conditionLabelId ? { select: { labelId: true } } : false,
+    },
+  });
+  if (!card) return false;
+
+  if (rule.conditionPriority && card.priority !== rule.conditionPriority) return false;
+  if (rule.conditionLabelId) {
+    const hasLabel = (card.labels ?? []).some((l) => l.labelId === rule.conditionLabelId);
+    if (!hasLabel) return false;
+  }
+
+  return true;
+}
+
 // ─── Calistirma motoru ──────────────────────────────────────────────
 //
 // card.service.ts'teki createCard/updateCard basarili olduktan SONRA
@@ -96,6 +124,7 @@ export async function runRulesForTrigger(input: {
 
   for (const rule of rules) {
     try {
+      if (!(await cardMatchesConditions(rule, input.cardId))) continue;
       await executeAction(rule, input.cardId);
     } catch (error) {
       console.error(`[automation] "${rule.name}" kurali calisirken hata:`, error);
@@ -287,6 +316,7 @@ export async function runScheduledAndDueSoonAutomations() {
     });
     for (const card of dueSoonCards) {
       try {
+        if (!(await cardMatchesConditions(rule, card.id))) continue;
         await executeAction(rule, card.id);
       } catch (error) {
         console.error(`[automation] due-soon "${rule.name}" kurali calisirken hata:`, error);
