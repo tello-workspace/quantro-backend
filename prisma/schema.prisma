@@ -143,9 +143,6 @@ model User {
   linkedinUrl     String?
   expertiseAreas  String[] @default([])
   languages       String[] @default([])
-  // UI dil tercihi (tr/en vb.) - "languages" (konustugu diller) alanindan
-  // farkli. Migration'i bu repoda olusturulmadan dogrudan DB'ye uygulanmis
-  // (2026-07-31), burada ve migrations/ klasorunde geriye donuk eklendi.
   language        String   @default("tr")
 
   // User-specific AI configurations

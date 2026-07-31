@@ -828,6 +828,7 @@ type SocketEventName = keyof ServerSocketEvents & string;
 
 export function broadcastToUser(userId: string, event: SocketEventName, data: unknown) {
   const ioServer = getIO();
+  console.log(`[SOCKET BROADCAST] User: ${userId}, Event: ${event}, IO initialized: ${!!ioServer}`);
   if (!ioServer) {
     console.warn(`[SOCKET] broadcastToUser: io is null, cannot emit ${event} to user:${userId}`);
     return;

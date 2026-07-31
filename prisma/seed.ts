@@ -83,17 +83,13 @@ async function main() {
     },
   });
 
-  const [todo, inProgress, review, done] = await Promise.all([
-    prisma.column.create({ data: { projectId: project.id, name: "To Do", position: 1 } }),
-    prisma.column.create({ data: { projectId: project.id, name: "In Progress", position: 2, wipLimit: 3 } }),
-    prisma.column.create({ data: { projectId: project.id, name: "Review", position: 3 } }),
-    prisma.column.create({ data: { projectId: project.id, name: "Done", position: 4, isDone: true } }),
-  ]);
+  const todo = await prisma.column.create({ data: { projectId: project.id, name: "To Do", position: 1 } });
+  const inProgress = await prisma.column.create({ data: { projectId: project.id, name: "In Progress", position: 2, wipLimit: 3 } });
+  const review = await prisma.column.create({ data: { projectId: project.id, name: "Review", position: 3 } });
+  const done = await prisma.column.create({ data: { projectId: project.id, name: "Done", position: 4, isDone: true } });
 
-  const [labelBug, labelDesign] = await Promise.all([
-    prisma.label.create({ data: { projectId: project.id, name: "Bug", color: "#EF4444" } }),
-    prisma.label.create({ data: { projectId: project.id, name: "Tasarım", color: "#8B5CF6" } }),
-  ]);
+  const labelBug = await prisma.label.create({ data: { projectId: project.id, name: "Bug", color: "#EF4444" } });
+  const labelDesign = await prisma.label.create({ data: { projectId: project.id, name: "Tasarım", color: "#8B5CF6" } });
 
   // --- To Do ---
   const card1 = await prisma.card.create({
