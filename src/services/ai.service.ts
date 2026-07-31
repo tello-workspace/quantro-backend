@@ -217,6 +217,17 @@ const TOOLS: {
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "list_members",
+      description: "Projedeki/organizasyondaki tüm üyeleri ve onların uzmanlık/yetkinlik bilgilerini listeler. projectId otomatiktir, parametre verme.",
+      parameters: {
+        type: "object",
+        properties: {},
+      },
+    },
+  },
 ];
 
 // ─── Tool Executor ──────────────────────────────────────────────────
@@ -335,6 +346,43 @@ async function executeToolByName(
           return `• "${c.name}" (ID: ${c.id}) — ${c.cards.length} kart${cardDetails}`;
         });
         return `📋 Proje kolonları ve kart detayları:\n${lines.join("\n\n")}`;
+      }
+
+      case "list_members": {
+        const members = await prisma.organizationMember.findMany({
+          where: { organization: { projects: { some: { id: projectId } } } },
+          relationLoadStrategy: "join",
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                title: true,
+                expertiseAreas: true,
+                languages: true,
+                badges: {
+                  include: {
+                    badge: {
+                      select: { name: true }
+                    }
+                  }
+                }
+              },
+            },
+          },
+        });
+        if (members.length === 0) return "Bu projede henüz üye yok.";
+
+        const lines = members.map((m: any) => {
+          const badges = m.user.badges?.map((ub: any) => ub.badge.name).join(", ");
+          const extras: string[] = [];
+          if (m.user.title) extras.push(`Unvan: ${m.user.title}`);
+          if (badges) extras.push(`Yetkinlik (rozet): ${badges}`);
+          if (m.user.expertiseAreas?.length) extras.push(`Uzmanlık: ${m.user.expertiseAreas.join(", ")}`);
+          if (m.user.languages?.length) extras.push(`Diller: ${m.user.languages.join(", ")}`);
+          return `• ${m.user.name} (ID: ${m.user.id})${extras.length ? ` — ${extras.join(" | ")}` : ""}`;
+        });
+        return `👥 Organizasyon üyeleri ve yetkinlikleri:\n${lines.join("\n")}`;
       }
 
       default:
@@ -840,6 +888,12 @@ function buildSystemPrompt(
 Bunun yerine kibarca "görev atama ve kart oluşturma yalnızca adminlerde, organizasyon
 adminine iletebilirsin" de. Yine de denersen sunucu isteği reddeder.`;
 
+  const contextSection = boardContext
+    ? `Proje panosundaki mevcut durum:\n${boardContext}`
+    : `NOT: Şu anda proje panosu bağlamı (sütunlar, kartlar ve üyeler) token tasarrufu amacıyla ilk prompta eklenmemiştir.
+Eğer kullanıcı panodaki kartlar, sütunlar veya üyeler hakkında soru sorursa, görev atamak isterse veya bir işlem yapmak isterse,
+mutlaka öncelikle "list_columns" veya "list_members" araçlarını (tool) çağırarak güncel durumu öğrenmelisin.`;
+
   return `Sen bir Trello benzeri bir proje yönetim uygulamasının AI asistanısın.
 
 Şu an seninle konuşan kullanıcı: ${userName} (rol: ${userRole})
@@ -900,8 +954,7 @@ Bu formatı birebir koru, kod bloğunun dilini "chart" olarak belirt ve geçerli
 
 Mevcut proje: "${projectName}"
 
-Proje panosundaki mevcut durum:
-${boardContext}
+${contextSection}
 
 Kullanıcılara kısa, net ve Türkçe cevap ver. İşlem başarılı olduğunda ne yaptığını özetle.`;
 }
@@ -936,6 +989,16 @@ async function getBoardContext(projectId: string): Promise<string> {
             id: true,
             name: true,
             email: true,
+            title: true,
+            expertiseAreas: true,
+            languages: true,
+            badges: {
+              include: {
+                badge: {
+                  select: { name: true }
+                }
+              }
+            }
           },
         },
       },
@@ -969,7 +1032,7 @@ async function getBoardContext(projectId: string): Promise<string> {
   for (const col of project.columns) {
     const cardCount = col.cards.length;
     const cardList = col.cards
-      .slice(0, 30)
+      .slice(0, 15)
       .map((c) => {
         let info = `    - "${c.title}" (ID: ${c.id})`;
         if (c.dueDate) info += ` (bitiş: ${new Date(c.dueDate).toLocaleDateString("tr-TR")})`;
@@ -985,6 +1048,60 @@ async function getBoardContext(projectId: string): Promise<string> {
   return parts.join("\n\n");
 }
 
+function requiresBoardContext(messages: ChatMessage[]): boolean {
+  // En son 3 mesajı inceleyip pano bağlamı gerekip gerekmediğini anlamak için heuristic kelime taraması
+  const recentText = messages
+    .slice(-3)
+    .map(m => m.content || "")
+    .join(" ")
+    .toLowerCase();
+
+  const boardKeywords = [
+    "kart", "görev", "todo", "task", "kolon", "sütun", "column", "board", "pano", "proje",
+    "üye", "kullanıcı", "member", "user", "assignee", "ata", "kimde", "iş yükü",
+    "sil", "güncelle", "oluştur", "ekle", "taşı", "move", "create", "delete", "update",
+    "grafik", "chart", "pie", "bar", "line", "analiz", "özet", "durum", "neler var",
+    "rapor", "deadlines", "tarih", "bitiş", "due", "priority", "öncelik"
+  ];
+
+  return boardKeywords.some(keyword => recentText.includes(keyword));
+}
+
+function compactOldMessages(messages: ChatMessage[]): ChatMessage[] {
+  // Eğer konuşma geçmişi çok kısa ise işlem yapmaya gerek yok
+  if (messages.length <= 4) return messages;
+
+  // Son 4 mesajı (son 2 konuşma turunu) tamamen orijinal haliyle koruyoruz.
+  // Bu, güncel konuşmanın detaylarını ve akıcılığını bozmamamızı sağlar.
+  const recentCount = 4;
+  const oldMessages = messages.slice(0, -recentCount);
+  const recentMessages = messages.slice(-recentCount);
+
+  const compactedOld = oldMessages.map((msg) => {
+    let content = msg.content || "";
+
+    // 1. Markdown kod, grafik ve JSON bloklarını temizle/sıkıştır
+    if (content.includes("```")) {
+      content = content
+        .replace(/```chart[\s\S]*?```/g, "[...grafik verisi sıkıştırıldı...]")
+        .replace(/```json[\s\S]*?```/g, "[...JSON verisi sıkıştırıldı...]")
+        .replace(/```[\s\S]*?```/g, "[...dosya/kod içeriği sıkıştırıldı...]");
+    }
+
+    // 2. Eğer metin hala çok uzunsa (örn. 400 karakterden fazla), baştan ve sondan keserek ortayı sıkıştır
+    if (content.length > 400) {
+      content = content.slice(0, 180) + "\n\n[...eski mesaj içeriği token tasarrufu için sıkıştırıldı...]\n\n" + content.slice(-180);
+    }
+
+    return {
+      ...msg,
+      content,
+    };
+  });
+
+  return [...compactedOld, ...recentMessages];
+}
+
 export async function sendMessage(
   projectId: string,
   userId: string,
@@ -995,6 +1112,10 @@ export async function sendMessage(
   if (!provider.apiKey) {
     return "⚠️ AI asistanı yapılandırılmamış. Lütfen yöneticinizle iletişime geçin.\n\n(.env dosyasında AI_API_KEY ve AI_PROVIDER değişkenlerini ayarlayın.)";
   }
+
+  const compacted = compactOldMessages(messages);
+  const recentMessages = compacted.slice(-10); // Slayt boyutunu 10'a indirerek bağlam şişmesini önle
+  const needsContext = requiresBoardContext(recentMessages);
 
   // Uc hazirlik sorgusu da birbirinden bagimsiz; sirayla beklemek yerine
   // paralel calisiyorlar (uzak DB'de her gidis-donus ~140ms).
@@ -1009,7 +1130,7 @@ export async function sendMessage(
       where: { userId, organization: { projects: { some: { id: projectId } } } },
       select: { role: true, user: { select: { name: true } } },
     }),
-    getBoardContext(projectId),
+    needsContext ? getBoardContext(projectId) : Promise.resolve(""),
   ]);
 
   if (!project) return "⚠️ Proje bulunamadı.";
@@ -1021,7 +1142,6 @@ export async function sendMessage(
     membership.role as "ADMIN" | "MEMBER",
   );
 
-  const recentMessages = messages.slice(-20);
   const apiMessages = [
     { role: "system" as const, content: systemPrompt },
     ...recentMessages.filter((m) => m.role !== "system"),
