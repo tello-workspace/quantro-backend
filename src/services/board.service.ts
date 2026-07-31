@@ -69,6 +69,7 @@ export async function getBoard(projectId: string, userId: string) {
         title: card.title,
         description: card.description,
         dueDate: card.dueDate?.toISOString().split("T")[0],
+        startDate: card.startDate?.toISOString().split("T")[0],
         columnId: card.columnId,
         position: card.position,
         priority: card.priority,

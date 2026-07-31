@@ -220,6 +220,7 @@ export interface CardPayload {
   assignees?: { id: string; name: string }[];
   priority: string;
   dueDate?: string;
+  startDate?: string | null;
   position: number;
   sprintId?: string | null;
   parentCardId?: string | null;

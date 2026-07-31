@@ -130,6 +130,7 @@ export async function createCard(columnId: string, input: CreateCardInput, userI
       priority: (input.priority as Priority) ?? "MEDIUM",
       storyPoints: input.storyPoints,
       dueDate: input.dueDate ? new Date(input.dueDate) : undefined,
+      startDate: input.startDate ? new Date(input.startDate) : undefined,
       position,
       lastActivityAt: new Date(),
       sprintId: input.sprintId ?? undefined,
@@ -159,6 +160,7 @@ export async function createCard(columnId: string, input: CreateCardInput, userI
     assignees: card.assignees.map((a) => ({ id: a.user.id, name: a.user.name })),
     priority: card.priority,
     dueDate: card.dueDate?.toISOString() ?? null,
+    startDate: card.startDate?.toISOString() ?? null,
     position: card.position,
     sprintId: card.sprintId,
     parentCardId: card.parentCardId,
@@ -250,6 +252,7 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
     input.priority !== undefined ||
     input.storyPoints !== undefined ||
     input.dueDate !== undefined ||
+    input.startDate !== undefined ||
     input.sprintId !== undefined ||
     input.parentCardId !== undefined;
 
@@ -279,7 +282,8 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
     input.title !== undefined ||
     input.description !== undefined ||
     input.priority !== undefined ||
-    input.dueDate !== undefined;
+    input.dueDate !== undefined ||
+    input.startDate !== undefined;
 
   const oldAssigneeIds = new Set(card.assignees.map((a) => a.userId));
   let newlyAssignedIds: string[] = [];
@@ -296,6 +300,7 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
   if (input.priority !== undefined) updateData.priority = input.priority as Priority;
   if (input.storyPoints !== undefined) updateData.storyPoints = input.storyPoints;
   if (input.dueDate !== undefined) updateData.dueDate = input.dueDate ? new Date(input.dueDate) : null;
+  if (input.startDate !== undefined) updateData.startDate = input.startDate ? new Date(input.startDate) : null;
   if (input.sprintId !== undefined) updateData.sprintId = input.sprintId;
   if (input.parentCardId !== undefined) updateData.parentCardId = input.parentCardId;
   if (input.columnId !== undefined) updateData.columnId = input.columnId;
@@ -420,6 +425,7 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
     assignees: updated.assignees.map((a) => ({ id: a.user.id, name: a.user.name })),
     priority: updated.priority,
     dueDate: updated.dueDate?.toISOString() ?? null,
+    startDate: updated.startDate?.toISOString() ?? null,
     position: updated.position,
     sprintId: updated.sprintId,
     parentCardId: updated.parentCardId,

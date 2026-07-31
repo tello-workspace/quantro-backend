@@ -186,6 +186,7 @@ async function executeAction(rule: AutomationRule, cardId: string) {
           columnId: true,
           priority: true,
           dueDate: true,
+          startDate: true,
           position: true,
           assignees: { include: { user: { select: { id: true, name: true } } } },
         },
@@ -205,6 +206,7 @@ async function executeAction(rule: AutomationRule, cardId: string) {
         assignees: card.assignees.map((a) => ({ id: a.user.id, name: a.user.name })),
         priority: card.priority,
         dueDate: card.dueDate?.toISOString() ?? null,
+        startDate: card.startDate?.toISOString() ?? null,
         position: card.position,
       });
 
