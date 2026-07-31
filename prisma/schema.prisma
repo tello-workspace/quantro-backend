@@ -2,11 +2,7 @@
 // Kullanım: backend/prisma/schema.prisma olarak kaydet → npx prisma migrate dev --name init
 
 generator client {
-  provider        = "prisma-client-js"
-  // relationJoins: ic ice include'lari ayri sorgular yerine tek SQL'de
-  // LATERAL JOIN ile ceker. Uzak DB'de her sorgu ~143ms oldugu icin
-  // sorgu sayisini dusurmek en buyuk kazanc.
-  previewFeatures = ["relationJoins"]
+  provider = "prisma-client-js"
 }
 
 datasource db {
@@ -140,11 +136,11 @@ model User {
   bio             String?
   experience      String? // serbest metin: "2 yıl 3 ay", "6 ay", "Yeni başladım" vb.
   githubUrl       String?
-  linkedinUrl     String?
-  expertiseAreas  String[] @default([])
-  languages       String[] @default([])
-  language        String   @default("tr")
-
+  linkedinUrl     String? 
+  expertiseAreas  String[] @default([]) 
+  languages       String[] @default([]) 
+  language        String   @default("tr") 
+ 
   // User-specific AI configurations
   aiProvider      String?
   aiApiKey        String?
