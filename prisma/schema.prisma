@@ -143,6 +143,10 @@ model User {
   linkedinUrl     String?
   expertiseAreas  String[] @default([])
   languages       String[] @default([])
+  // Supabase Storage'daki genel (public) "avatars" bucket'ina yuklenmis
+  // fotografin tam URL'i - CardAttachment'tan farkli olarak imzali URL
+  // gerekmiyor, profil fotografi zaten herkese acik gosterilecek bir sey.
+  avatarUrl       String?
   language        String   @default("tr")
 
   // User-specific AI configurations

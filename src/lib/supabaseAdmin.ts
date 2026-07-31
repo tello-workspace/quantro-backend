@@ -13,3 +13,7 @@ export const supabaseAdmin =
     : null;
 
 export const ATTACHMENTS_BUCKET = "card-attachments";
+// Kart eklerinden farkli olarak PUBLIC bir bucket: profil fotograflari zaten
+// herkese acik gosterilecegi icin imzali URL uretmeye gerek yok, dogrudan
+// getPublicUrl() kullanilir.
+export const AVATARS_BUCKET = "avatars";
