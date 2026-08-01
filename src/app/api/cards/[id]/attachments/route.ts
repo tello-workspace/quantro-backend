@@ -3,6 +3,7 @@ import * as attachmentService from "@/services/card-attachment.service";
 import { successResponse, errorResponse, handleApiError } from "@/utils/api-response";
 import { authenticate, AuthenticatedRequest } from "@/middleware/auth";
 import { AppError } from "@/utils/errors";
+import { MAX_FILE_SIZE } from "@/lib/attachment-policy";
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const authError = await authenticate(request);
@@ -35,6 +36,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     if (!(file instanceof File)) {
       return errorResponse("file alanı gerekli", 400, "VALIDATION_ERROR");
+    }
+
+    // Buffer'a almadan once boyut reddi: devasa bir dosyayi sadece reddetmek
+    // icin bile bellekte tutmak gereksiz. (Servis kontrolu backstop olarak kalir.)
+    if (file.size > MAX_FILE_SIZE) {
+      return errorResponse("Dosya en fazla 10MB olabilir", 400, "FILE_TOO_LARGE");
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());

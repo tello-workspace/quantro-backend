@@ -1,7 +1,9 @@
 import { describe, it, expect, afterEach } from "vitest";
+import sharp from "sharp";
 import { createWorkspace, createCard, cleanup } from "@/test/fixtures";
 import * as attachmentService from "@/services/card-attachment.service";
 import { NotFoundError, ForbiddenError, AppError } from "@/utils/errors";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 function fakeFile(overrides: Partial<{ name: string; type: string; size: number }> = {}) {
   return {
@@ -83,5 +85,30 @@ describe("card-attachment.service", () => {
     await expect(
       attachmentService.deleteAttachment(card.id, "olmayan-ek-id", admin.id),
     ).rejects.toThrow(NotFoundError);
+  });
+
+  // Supabase Storage anahtarlari (.env) olmadan bu test atlanir — lokalde
+  // key yokken gecen, production'da gercekten calisani dogrulayan entegrasyon
+  // testi. Anahtarlar set edilince "mimeType image/webp'e donustu" beklenir.
+  it.skipIf(!supabaseAdmin)("PNG yuklendiginde mimeType image/webp'e donusturulur", async () => {
+    const { admin, org, todo } = await createWorkspace();
+    orgIds.push(org.id);
+    userIds.push(admin.id);
+    const card = await createCard(todo.id, admin.id);
+
+    const pngBuffer = await sharp({
+      create: { width: 400, height: 400, channels: 4, background: { r: 50, g: 100, b: 200, alpha: 1 } },
+    })
+      .png()
+      .toBuffer();
+
+    const attachment = await attachmentService.uploadAttachment(card.id, admin.id, {
+      name: "foto.png",
+      type: "image/png",
+      size: pngBuffer.length,
+      buffer: pngBuffer,
+    });
+
+    expect(attachment.mimeType).toBe("image/webp");
   });
 });

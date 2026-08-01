@@ -3,25 +3,37 @@ import { prisma } from "@/lib/prisma";
 import { NotFoundError, ForbiddenError, AppError } from "@/utils/errors";
 import { supabaseAdmin, ATTACHMENTS_BUCKET } from "@/lib/supabaseAdmin";
 import { broadcastToProject, SocketEvents } from "@/server/socket";
+import {
+  ALLOWED_MIME_TYPES,
+  MAX_ATTACHMENTS_PER_CARD,
+  MAX_FILE_SIZE,
+} from "@/lib/attachment-policy";
+import { compressImage } from "@/services/image-compression.service";
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // bucket limitiyle ayni (10MB)
 const SIGNED_URL_TTL_SECONDS = 60 * 60; // 1 saat
 
-const ALLOWED_MIME_TYPES = new Set([
-  "image/png",
-  "image/jpeg",
-  "image/gif",
-  "image/webp",
-  "image/svg+xml",
-  "application/pdf",
-  "text/plain",
-  "text/csv",
-  "application/msword",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "application/vnd.ms-excel",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  "application/zip",
-]);
+// MIME tipinden storage uzantisini turer. WebP'e donusturulen gorsellerde
+// orijinal uzanti (.png/.jpg) yaniltir — depolanan dosyanin gercek turu ne ise
+// o yazilir, boylece signed-URL indirmede Content-Type dogru gelir.
+const EXTENSION_BY_MIME: Record<string, string> = {
+  "image/webp": "webp",
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/gif": "gif",
+  "image/svg+xml": "svg",
+  "application/pdf": "pdf",
+  "text/plain": "txt",
+  "text/csv": "csv",
+  "application/msword": "doc",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+  "application/vnd.ms-excel": "xls",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+  "application/zip": "zip",
+};
+
+function extensionForMime(mimeType: string): string {
+  return EXTENSION_BY_MIME[mimeType] ?? "bin";
+}
 
 // Kartın kolonuna → projesine → organizasyonuna erişim kontrolü (comment.service.ts ile ayni desen)
 async function checkCardAccess(cardId: string, userId: string) {
@@ -42,10 +54,6 @@ async function checkCardAccess(cardId: string, userId: string) {
   if (!member) throw new ForbiddenError("Bu karta erişim yetkiniz yok");
 
   return { projectId: card.column.projectId, role: member.role };
-}
-
-function sanitizeFileName(name: string): string {
-  return name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-100);
 }
 
 export async function listAttachments(cardId: string, userId: string) {
@@ -89,11 +97,22 @@ export async function uploadAttachment(
     throw new AppError(500, "Dosya depolama yapılandırılmamış", "CONFIG_ERROR");
   }
 
-  const storagePath = `${cardId}/${crypto.randomUUID()}-${sanitizeFileName(file.name)}`;
+  const existingCount = await prisma.cardAttachment.count({ where: { cardId } });
+  if (existingCount >= MAX_ATTACHMENTS_PER_CARD) {
+    throw new AppError(400, `Kart başına en fazla ${MAX_ATTACHMENTS_PER_CARD} ek eklenebilir`, "ATTACHMENT_LIMIT_EXCEEDED");
+  }
+
+  // Gorsel sikistirmasi: JPEG/PNG -> WebP, buyuk WebP -> boyutlandirma.
+  // null donerse orijinal buffer ve mimeType kullanilir (asla upload bozulmaz).
+  const processed = await compressImage(file.buffer, file.type);
+  const effectiveBuffer = processed?.buffer ?? file.buffer;
+  const effectiveMimeType = processed?.mimeType ?? file.type;
+
+  const storagePath = `${cardId}/${crypto.randomUUID()}.${extensionForMime(effectiveMimeType)}`;
 
   const { error: uploadError } = await supabaseAdmin.storage
     .from(ATTACHMENTS_BUCKET)
-    .upload(storagePath, file.buffer, { contentType: file.type });
+    .upload(storagePath, effectiveBuffer, { contentType: effectiveMimeType });
 
   if (uploadError) {
     throw new AppError(500, "Dosya yüklenemedi", "UPLOAD_FAILED");
@@ -105,8 +124,8 @@ export async function uploadAttachment(
       uploaderId: userId,
       fileName: file.name,
       storagePath,
-      fileSize: file.size,
-      mimeType: file.type,
+      fileSize: effectiveBuffer.length,
+      mimeType: effectiveMimeType,
     },
     include: { uploader: { select: { id: true, name: true } } },
   });
