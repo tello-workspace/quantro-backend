@@ -6,6 +6,22 @@ import {
   RESIZE_ONLY_IMAGE_TYPES,
 } from "@/lib/attachment-policy";
 
+// Avatar ozel politika: kare, kucuk (512px), daha yuksek kalite.
+// Kart eklerinden farkli olarak GIF'in ILK KARESI WebP'e cevrilir —
+// animasyonlu avatar kucuk bir karede anlamsizdir ve 5MB GIF kota yer.
+const MAX_AVATAR_DIMENSION = 512;
+const AVATAR_QUALITY = 85;
+
+// Avatar icin kabul edilen kaynak MIME'ler. SVG/non-image burada kabul edilmez
+// (avatar.service.ts zaten kendi ALLOWED_MIME_TYPES'inda kistliyor, bu sadece
+// fonksiyonun dar sözlesmesi).
+const AVATAR_COMPRESSIBLE_MIME_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+]);
+
 export interface CompressedImage {
   buffer: Buffer;
   mimeType: string;
@@ -83,6 +99,41 @@ async function resizeOnlyIfOversize(buffer: Buffer): Promise<CompressedImage | n
     return null;
   } catch (error) {
     console.error("[image-compression] WebP boyutlandirma basarisiz, orijinal kullanilacak:", error);
+    return null;
+  }
+}
+
+// Avatar sikistirmasi: kare WebP'e donusturur, GIF'in ilk karesini alir.
+//
+// Kart eki compressImage'den farkli kurallar:
+// - fit: "cover" — avatar her zaman kare (512x512) olur, tasan kisim kirpilir
+// - GIF: animated: false -> ilk kare, animasyon avatar olarak tutulmaz
+// - CIKTI ASLA ORJINALDEN BUYUK OLAMAZ + hata asla yuklemeyi bozmaz
+export async function compressAvatarImage(
+  buffer: Buffer,
+  mimeType: string,
+): Promise<CompressedImage | null> {
+  if (!AVATAR_COMPRESSIBLE_MIME_TYPES.has(mimeType)) return null;
+
+  try {
+    const output = await sharp(buffer, { animated: false })
+      .rotate() // EXIF oryantasyonu (telefonda dik cekilen fotograflar)
+      .resize({
+        width: MAX_AVATAR_DIMENSION,
+        height: MAX_AVATAR_DIMENSION,
+        fit: "cover", // kare kirpma: oranlar korunur, tasan kismi keser
+        position: "centre",
+        withoutEnlargement: true, // kucuk gorseli asla buyutme
+      })
+      .webp({ quality: AVATAR_QUALITY })
+      .toBuffer();
+
+    if (output.length < buffer.length) {
+      return { buffer: output, mimeType: "image/webp" };
+    }
+    return null;
+  } catch (error) {
+    console.error("[image-compression] Avatar sikistirma basarisiz, orijinal kullanilacak:", error);
     return null;
   }
 }
