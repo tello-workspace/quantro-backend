@@ -351,7 +351,6 @@ async function executeToolByName(
       case "list_members": {
         const members = await prisma.organizationMember.findMany({
           where: { organization: { projects: { some: { id: projectId } } } },
-          relationLoadStrategy: "join",
           include: {
             user: {
               select: {
@@ -977,7 +976,6 @@ async function getBoardContext(projectId: string): Promise<string> {
   const [project, members] = await Promise.all([
     prisma.project.findUnique({
       where: { id: projectId },
-      relationLoadStrategy: "join",
       include: {
         columns: {
           orderBy: { position: "asc" },
@@ -994,7 +992,6 @@ async function getBoardContext(projectId: string): Promise<string> {
     }),
     prisma.organizationMember.findMany({
       where: { organization: { projects: { some: { id: projectId } } } },
-      relationLoadStrategy: "join",
       include: {
         user: {
           select: {

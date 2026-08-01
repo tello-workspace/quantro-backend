@@ -46,7 +46,6 @@ export async function getMessages(
     where: { organizationId, ...cursorFilter },
     orderBy: { createdAt: "desc" },
     take: input.limit,
-    relationLoadStrategy: "join",
     include: {
       author: { select: { id: true, name: true, email: true } },
     },
