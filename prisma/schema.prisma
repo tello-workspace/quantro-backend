@@ -3,10 +3,6 @@
 
 generator client {
   provider        = "prisma-client-js"
-  // relationJoins: ic ice include'lari ayri sorgular yerine tek SQL'de
-  // LATERAL JOIN ile ceker. Uzak DB'de her sorgu ~143ms oldugu icin
-  // sorgu sayisini dusurmek en buyuk kazanc.
-  previewFeatures = ["relationJoins"]
 }
 
 datasource db {
@@ -150,7 +146,6 @@ model User {
   // gerekmiyor, profil fotografi zaten herkese acik gosterilecek bir sey.
   avatarUrl       String?
   language        String   @default("tr")
-
   // User-specific AI configurations
   aiProvider      String?
   aiApiKey        String?

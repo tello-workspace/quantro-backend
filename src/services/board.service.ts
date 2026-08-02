@@ -26,14 +26,11 @@ export async function getBoard(projectId: string, userId: string) {
   // once sirayla beklenirse bu bedel iki kez daha odeniyor; ikisini paralel
   // baslatip yetki hatasini yine de veriyi donmeden firlatiyoruz.
   //
-  // relationLoadStrategy: "join" ise ic ice include'lari (assignees -> user,
-  // labels -> label) ayri sorgular yerine tek SQL'de topluyor: 6 sorgu -> 1.
   const [access, columns] = await Promise.all([
     checkProjectAccess(projectId, userId),
     prisma.column.findMany({
       where: { projectId },
       orderBy: { position: "asc" },
-      relationLoadStrategy: "join",
       include: {
         // Onceden hic limit yoktu - tek bir kolonda binlerce kart biriken bir
         // proje (en cok "Done" kolonu, hic temizlenmediginde) tum kartlari

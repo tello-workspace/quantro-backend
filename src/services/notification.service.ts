@@ -55,8 +55,6 @@ export async function getNotifications(userId: string, unreadOnly?: boolean) {
     where,
     orderBy: { createdAt: "desc" },
     take: 50,
-    // card ve invitation iliskileri ayri sorgular yerine tek SQL'de gelsin
-    relationLoadStrategy: "join",
     include: {
       card: {
         select: {

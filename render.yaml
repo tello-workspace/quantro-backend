@@ -52,5 +52,7 @@ services:
         sync: false
       - key: RESEND_FROM_EMAIL
         value: "Tello <onboarding@resend.dev>"
+      - key: SUPABASE_URL
+        sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false

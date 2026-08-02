@@ -160,7 +160,6 @@ export async function listRequests(
     },
     orderBy: [{ status: "asc" }, { createdAt: "desc" }],
     take: input.limit,
-    relationLoadStrategy: "join",
     include: REQUEST_INCLUDE,
   });
 

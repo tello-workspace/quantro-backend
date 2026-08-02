@@ -2,9 +2,20 @@ import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
 import { AppError, NotFoundError } from "@/utils/errors";
 import { supabaseAdmin, AVATARS_BUCKET } from "@/lib/supabaseAdmin";
+import { compressAvatarImage } from "@/services/image-compression.service";
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // bucket limitiyle ayni (5MB)
 const ALLOWED_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+
+// MIME tipinden storage uzantisi. WebP'e donusturulen gorsellerde orijinal
+// uzanti (.png/.jpg/.gif) yaniltir — depolanan dosyanin gercek turu ne ise o
+// yazilir ki public URL'in Content-Type'i dogru gelsin.
+const EXTENSION_BY_MIME: Record<string, string> = {
+  "image/webp": "webp",
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/gif": "gif",
+};
 
 export async function uploadAvatar(
   userId: string,
@@ -23,15 +34,21 @@ export async function uploadAvatar(
   const existing = await prisma.user.findUnique({ where: { id: userId }, select: { avatarUrl: true } });
   if (!existing) throw new NotFoundError("Kullanıcı");
 
-  const extension = file.type.split("/")[1] ?? "png";
+  // Gorsel sikistirmasi: 512px kare WebP, GIF'in ilk karesi alinir.
+  // null donerse orijinal buffer ve mimeType kullanilir (upload asla bozulmaz).
+  const processed = await compressAvatarImage(file.buffer, file.type);
+  const effectiveBuffer = processed?.buffer ?? file.buffer;
+  const effectiveMimeType = processed?.mimeType ?? file.type;
+
   // Her yuklemede yeni bir dosya adi - eski dosyayi asagida ayrica siliyoruz,
   // ayni yolu yeniden kullanmiyoruz ki CDN/tarayici cache'i eski gorseli
   // gostermeye devam etmesin.
+  const extension = EXTENSION_BY_MIME[effectiveMimeType] ?? "webp";
   const storagePath = `${userId}/${crypto.randomUUID()}.${extension}`;
 
   const { error: uploadError } = await supabaseAdmin.storage
     .from(AVATARS_BUCKET)
-    .upload(storagePath, file.buffer, { contentType: file.type });
+    .upload(storagePath, effectiveBuffer, { contentType: effectiveMimeType });
 
   if (uploadError) {
     // Onceden Supabase'in gercek hatasi yutuluyordu ve kullaniciya sadece

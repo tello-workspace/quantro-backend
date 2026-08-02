@@ -4,6 +4,8 @@ import { successResponse, errorResponse, handleApiError } from "@/utils/api-resp
 import { authenticate, AuthenticatedRequest } from "@/middleware/auth";
 import { AppError } from "@/utils/errors";
 
+const MAX_FILE_SIZE = 5 * 1024 * 1024; // avatar.service ile ayni (5MB)
+
 export async function POST(request: NextRequest) {
   const authError = await authenticate(request);
   if (authError) return authError;
@@ -16,6 +18,12 @@ export async function POST(request: NextRequest) {
 
     if (!(file instanceof File)) {
       return errorResponse("file alanı gerekli", 400, "VALIDATION_ERROR");
+    }
+
+    // Buffer'a almadan once boyut reddi: devasa bir gorseli sadece reddetmek
+    // icin bile bellekte tutmak gereksiz. (Servis kontrolu backstop olarak kalir.)
+    if (file.size > MAX_FILE_SIZE) {
+      return errorResponse("Görsel en fazla 5MB olabilir", 400, "FILE_TOO_LARGE");
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
