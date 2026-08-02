@@ -96,7 +96,16 @@ export async function uploadAttachment(
     .upload(storagePath, file.buffer, { contentType: file.type });
 
   if (uploadError) {
-    throw new AppError(500, "Dosya yüklenemedi", "UPLOAD_FAILED");
+    // Gercek Supabase hatasini yutma - bkz. avatar.service.ts'teki ayni not.
+    console.error("[attachment] Supabase upload hatasi:", {
+      bucket: ATTACHMENTS_BUCKET,
+      storagePath,
+      contentType: file.type,
+      size: file.size,
+      message: uploadError.message,
+      name: uploadError.name,
+    });
+    throw new AppError(500, `Dosya yüklenemedi: ${uploadError.message}`, "UPLOAD_FAILED");
   }
 
   const attachment = await prisma.cardAttachment.create({

@@ -34,7 +34,19 @@ export async function uploadAvatar(
     .upload(storagePath, file.buffer, { contentType: file.type });
 
   if (uploadError) {
-    throw new AppError(500, "Görsel yüklenemedi", "UPLOAD_FAILED");
+    // Onceden Supabase'in gercek hatasi yutuluyordu ve kullaniciya sadece
+    // "Görsel yüklenemedi" donuyordu - hangi asamada patladigi (yanlis
+    // anahtar / eksik bucket / RLS / mime reddi) hicbir yerde gorunmuyordu.
+    // Sebebi hem sunucu loguna hem de mesaja tasiyoruz.
+    console.error("[avatar] Supabase upload hatasi:", {
+      bucket: AVATARS_BUCKET,
+      storagePath,
+      contentType: file.type,
+      size: file.size,
+      message: uploadError.message,
+      name: uploadError.name,
+    });
+    throw new AppError(500, `Görsel yüklenemedi: ${uploadError.message}`, "UPLOAD_FAILED");
   }
 
   const { data: publicUrlData } = supabaseAdmin.storage.from(AVATARS_BUCKET).getPublicUrl(storagePath);
