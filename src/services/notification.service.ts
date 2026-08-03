@@ -11,7 +11,21 @@ interface CreateNotificationInput {
   invitationId?: string;
 }
 
+// Kullanici bu bildirim tipini sessize aldiysa true doner. Alinan
+// pref satiri enabled=false tutar (varsayilan: her tip acik, satir yok).
+async function isTypeMuted(userId: string, type: NotificationType): Promise<boolean> {
+  const pref = await prisma.userNotificationPref.findUnique({
+    where: { userId_type: { userId, type } },
+    select: { enabled: true },
+  });
+  return pref !== null && pref.enabled === false;
+}
+
 export async function createNotification(input: CreateNotificationInput) {
+  // Sessize alma: kapali bir tip icin bildirim OLUSTURULMAZ (skip-creation).
+  // Boylece DB satiri ve socket event'i gereksiz uretilmez.
+  if (await isTypeMuted(input.userId, input.type)) return null;
+
   const notification = await prisma.notification.create({
     data: {
       userId: input.userId,
@@ -129,8 +143,18 @@ export async function broadcastToOrganization(
 
   if (filtered.length === 0) return;
 
+  // Sessize alma: bu tipi kapatmis uyeler toplu bildirimden cikarilir.
+  const muted = await prisma.userNotificationPref.findMany({
+    where: { enabled: false, type, userId: { in: filtered.map((m) => m.userId) } },
+    select: { userId: true },
+  });
+  const mutedSet = new Set(muted.map((m) => m.userId));
+  const recipients = filtered.filter((m) => !mutedSet.has(m.userId));
+
+  if (recipients.length === 0) return;
+
   await prisma.notification.createMany({
-    data: filtered.map((m) => ({
+    data: recipients.map((m) => ({
       userId: m.userId,
       type,
       message,
@@ -138,7 +162,7 @@ export async function broadcastToOrganization(
   });
 
   const createdAt = new Date().toISOString();
-  for (const member of filtered) {
+  for (const member of recipients) {
     broadcastToUser(member.userId, SocketEvents.NOTIFICATION_NEW, {
       userId: member.userId,
       type,
@@ -147,4 +171,32 @@ export async function broadcastToOrganization(
       createdAt,
     });
   }
+}
+
+// Kullanicinin mevcut bildirim tercihlerini getirir (kapali tipler).
+export async function getNotificationPrefs(userId: string) {
+  const prefs = await prisma.userNotificationPref.findMany({
+    where: { userId },
+    select: { type: true, enabled: true },
+  });
+  return prefs;
+}
+
+// Bildirim tercihini gunceller (sessize al / act). enabled=true ise satir
+// silinir (varsayilan: acik), false ise upsert edilir.
+export async function setNotificationPref(
+  userId: string,
+  type: NotificationType,
+  enabled: boolean,
+) {
+  if (enabled) {
+    await prisma.userNotificationPref.deleteMany({ where: { userId, type } });
+  } else {
+    await prisma.userNotificationPref.upsert({
+      where: { userId_type: { userId, type } },
+      create: { userId, type, enabled: false },
+      update: { enabled: false },
+    });
+  }
+  return { type, enabled };
 }

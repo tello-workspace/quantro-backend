@@ -176,9 +176,10 @@ describe("notification.service", () => {
       message: "Test bildirimi",
     });
 
+    expect(notification).not.toBeNull();
     expect(notification).toMatchObject({ userId: member.id, read: false });
 
-    await notificationService.markAsRead(notification.id, member.id);
+    await notificationService.markAsRead(notification!.id, member.id);
     expect(await notificationService.getUnreadCount(member.id)).toBe(0);
   });
 
@@ -193,7 +194,7 @@ describe("notification.service", () => {
       message: "Test",
     });
 
-    await expect(notificationService.markAsRead(notification.id, admin.id)).rejects.toThrow(ForbiddenError);
+    await expect(notificationService.markAsRead(notification!.id, admin.id)).rejects.toThrow(ForbiddenError);
   });
 });
 
