@@ -161,6 +161,7 @@ model User {
   comments                Comment[]
   activities              Activity[]
   notifications           Notification[]
+  notificationPrefs       UserNotificationPref[]
   sentInvitations         OrganizationInvitation[] @relation("InvitationSender")
   receivedInvitations     OrganizationInvitation[] @relation("InvitationReceiver")
   chatMessages            ChatMessage[]
@@ -433,6 +434,8 @@ model Card {
   position       Float
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
+  isArchived     Boolean   @default(false) // soft-delete: arsivlenen kart silinmez, listelerden gizlenir
+  archivedAt     DateTime?
   lastActivityAt DateTime  @default(now()) // STALE MOTORUNUN KALBİ:
   // karta dokunan her işlem (taşıma, yorum, düzenleme, atama) bunu now() yapar.
   // Gece cron'u: lastActivityAt < now-7gün && column.isDone == false → stale
@@ -674,4 +677,18 @@ model Notification {
   invitation OrganizationInvitation? @relation(fields: [invitationId], references: [id], onDelete: Cascade)
 
   @@index([userId, read])
+}
+
+// Kullanicinin hangi bildirim tiplerini kapatigini tutar (sessize alma).
+// Varsayilan: tum tipler acik; bu tabloda sadece kapatilan tiplerin satiri
+// olur. enabled=false olan tipler icin bildirim OLUSTURULMAZ (skip-display
+// degil skip-creation) - bu hem DB'yi hem socket'i bos yere mesgul etmez.
+model UserNotificationPref {
+  userId  String
+  type    NotificationType
+  enabled Boolean @default(false) // false = bu tip sessize alindi
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, type])
 }

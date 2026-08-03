@@ -313,6 +313,7 @@ export async function runScheduledAndDueSoonAutomations() {
       where: {
         column: { projectId: rule.projectId, isDone: false },
         dueDate: { gte: now, lte: threshold },
+        isArchived: false,
       },
       select: { id: true },
     });

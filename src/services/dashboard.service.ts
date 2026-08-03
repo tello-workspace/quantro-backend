@@ -8,6 +8,7 @@ export async function getMyAssignedCards(userId: string) {
     where: {
       assignees: { some: { userId } },
       column: { isDone: false },
+      isArchived: false,
     },
     select: {
       id: true,

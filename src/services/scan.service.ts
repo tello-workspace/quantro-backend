@@ -30,6 +30,7 @@ export async function scanStaleCards() {
     where: {
       lastActivityAt: { lt: threshold },
       column: { isDone: false },
+      isArchived: false,
     },
     select: { id: true, title: true, creatorId: true, assignees: { select: { userId: true } } },
   });
@@ -58,6 +59,7 @@ export async function scanDeadlineRisk() {
     where: {
       dueDate: { gte: now, lte: soon },
       column: { isDone: false },
+      isArchived: false,
     },
     select: { id: true, title: true, creatorId: true, assignees: { select: { userId: true } } },
   });

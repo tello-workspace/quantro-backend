@@ -14,7 +14,7 @@ const ROLLOVER_PRIORITIES = ["URGENT", "HIGH"] as const;
 // sprint'e bagli halde asili kalmaz.
 async function rolloverIncompleteCards(sprintId: string, projectId: string, userId: string) {
   const incompleteCards = await prisma.card.findMany({
-    where: { sprintId, column: { isDone: false } },
+    where: { sprintId, column: { isDone: false }, isArchived: false },
     select: {
       id: true,
       title: true,
@@ -200,7 +200,7 @@ export async function getSprintCards(sprintId: string, userId: string) {
   await checkProjectAccess(sprint.projectId, userId);
 
   return prisma.card.findMany({
-    where: { sprintId },
+    where: { sprintId, isArchived: false },
     select: {
       id: true,
       title: true,

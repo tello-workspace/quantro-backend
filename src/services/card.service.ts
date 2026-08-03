@@ -182,7 +182,7 @@ export async function getCards(columnId: string, userId: string) {
   await checkColumnAccess(columnId, userId);
 
   const cards = await prisma.card.findMany({
-    where: { columnId },
+    where: { columnId, isArchived: false },
     orderBy: { position: "asc" },
     include: {
       ...assigneeInclude,
@@ -191,6 +191,17 @@ export async function getCards(columnId: string, userId: string) {
   });
 
   return cards;
+}
+
+// Arsivlenen kartlari (soft-delete) listeler - board'da gorunmez ama kurtarilabilir.
+export async function getArchivedCards(columnId: string, userId: string) {
+  await checkColumnAccess(columnId, userId);
+
+  return prisma.card.findMany({
+    where: { columnId, isArchived: true },
+    orderBy: { archivedAt: "desc" },
+    include: assigneeInclude,
+  });
 }
 
 export async function getCardById(cardId: string, userId: string) {
@@ -467,4 +478,37 @@ export async function deleteCard(cardId: string, userId: string) {
   }
 
   broadcastToProject(projectId, SocketEvents.CARD_DELETED, { cardId, projectId });
+}
+
+// Karti arsivler (soft-delete): veri silinmez, isArchived=true olur ve
+// board/stale/tarama sorgularindan gizlenir. Geri yuklenebilir.
+export async function archiveCard(cardId: string, userId: string) {
+  const card = await prisma.card.findUnique({ where: { id: cardId }, select: { columnId: true, isArchived: true } });
+  if (!card) throw new NotFoundError("Kart");
+
+  const { projectId } = await checkColumnAccess(card.columnId, userId);
+  if (card.isArchived) return; // zaten arsivli - idempotent
+
+  await prisma.card.update({
+    where: { id: cardId },
+    data: { isArchived: true, archivedAt: new Date() },
+  });
+
+  broadcastToProject(projectId, SocketEvents.CARD_UPDATED, { id: cardId, isArchived: true, projectId });
+}
+
+// Arsivlenen karti geri yukler.
+export async function restoreCard(cardId: string, userId: string) {
+  const card = await prisma.card.findUnique({ where: { id: cardId }, select: { columnId: true, isArchived: true } });
+  if (!card) throw new NotFoundError("Kart");
+
+  const { projectId } = await checkColumnAccess(card.columnId, userId);
+  if (!card.isArchived) return; // zaten aktif - idempotent
+
+  await prisma.card.update({
+    where: { id: cardId },
+    data: { isArchived: false, archivedAt: null },
+  });
+
+  broadcastToProject(projectId, SocketEvents.CARD_UPDATED, { id: cardId, isArchived: false, projectId });
 }
