@@ -49,7 +49,7 @@ export async function getProjectInsights(projectId: string, userId: string) {
       lastActivityAt: true,
       columnId: true,
       column: { select: { id: true, name: true } },
-      assignees: { select: { userId: true, user: { select: { id: true, name: true } } } },
+      assignees: { select: { userId: true, user: { select: { id: true, name: true, avatarUrl: true } } } },
       blockedBy: {
         select: { blocker: { select: { id: true, column: { select: { isDone: true } } } } },
       },
@@ -75,7 +75,7 @@ export async function getProjectInsights(projectId: string, userId: string) {
   // Ortalamanin 1.5 kati ustundeki kisi "asiri yuklu" isaretlenir.
   const workloadMap = new Map<
     string,
-    { user: { id: string; name: string }; weightedLoad: number; cardCount: number }
+    { user: { id: string; name: string; avatarUrl?: string | null }; weightedLoad: number; cardCount: number }
   >();
   for (const card of activeCards) {
     const weight = card.storyPoints ?? PRIORITY_WEIGHT[card.priority];
@@ -101,6 +101,7 @@ export async function getProjectInsights(projectId: string, userId: string) {
     .map((e) => ({
       userId: e.user.id,
       userName: e.user.name,
+      avatarUrl: (e.user as { avatarUrl?: string | null }).avatarUrl ?? null,
       cardCount: e.cardCount,
       weightedLoad: e.weightedLoad,
       overloaded: averageLoad > 0 && e.weightedLoad > averageLoad * OVERLOAD_MULTIPLIER,

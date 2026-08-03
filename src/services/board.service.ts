@@ -44,7 +44,7 @@ export async function getBoard(projectId: string, userId: string) {
           orderBy: { position: "asc" },
           where: { isArchived: false },
           include: {
-            assignees: { include: { user: { select: { id: true, name: true, badges: { include: { badge: { select: { id: true, name: true, color: true, icon: true } } } } } } } },
+            assignees: { include: { user: { select: { id: true, name: true, avatarUrl: true, badges: { include: { badge: { select: { id: true, name: true, color: true, icon: true } } } } } } } },
             labels: { include: { label: true } },
             // Panoda sadece "3/7" ilerleme rozeti icin - madde metinleri
             // TaskModal acilinca ayri bir istekle cekiliyor.
@@ -73,7 +73,7 @@ export async function getBoard(projectId: string, userId: string) {
         priority: card.priority,
         storyPoints: card.storyPoints,
         lastActivityAt: card.lastActivityAt.toISOString(),
-        assignees: card.assignees.map((a) => ({ id: a.user.id, name: a.user.name })),
+        assignees: card.assignees.map((a) => ({ id: a.user.id, name: a.user.name, avatarUrl: a.user.avatarUrl })),
         labels: card.labels.map((cl) => ({
           id: cl.label.id,
           name: cl.label.name,
