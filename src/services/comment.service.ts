@@ -3,7 +3,6 @@ import { NotFoundError, ForbiddenError } from "@/utils/errors";
 import { logActivity } from "@/services/activity.service";
 import { broadcastToProject, SocketEvents } from "@/server/socket";
 import * as notificationService from "@/services/notification.service";
-import { notifyWatchers } from "@/services/watcher.service";
 import type { CreateCommentInput, UpdateCommentInput } from "@/schemas/comment.schema";
 
 // Kartın kolonuna → projesine → organizasyonuna erişim kontrolü
@@ -112,8 +111,6 @@ export async function createComment(cardId: string, input: CreateCommentInput, u
       cardId,
     });
   }
-
-  await notifyWatchers(cardId, userId, `${comment.author.name} izlediğin "${cardTitle}" kartına yorum yaptı`);
 
   return comment;
 }

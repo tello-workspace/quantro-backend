@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
 import { AppError, NotFoundError } from "@/utils/errors";
-import { supabaseAdmin, AVATARS_BUCKET } from "@/lib/supabaseAdmin";
+import { supabaseAdmin, AVATARS_BUCKET, storageKeyHint } from "@/lib/supabaseAdmin";
 import { compressAvatarImage } from "@/services/image-compression.service";
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // bucket limitiyle ayni (5MB)
@@ -51,7 +51,23 @@ export async function uploadAvatar(
     .upload(storagePath, effectiveBuffer, { contentType: effectiveMimeType });
 
   if (uploadError) {
-    throw new AppError(500, "Görsel yüklenemedi", "UPLOAD_FAILED");
+    // Onceden Supabase'in gercek hatasi yutuluyordu ve kullaniciya sadece
+    // "Görsel yüklenemedi" donuyordu - hangi asamada patladigi (yanlis
+    // anahtar / eksik bucket / RLS / mime reddi) hicbir yerde gorunmuyordu.
+    // Sebebi hem sunucu loguna hem de mesaja tasiyoruz.
+    console.error("[avatar] Supabase upload hatasi:", {
+      bucket: AVATARS_BUCKET,
+      storagePath,
+      contentType: file.type,
+      size: file.size,
+      message: uploadError.message,
+      name: uploadError.name,
+    });
+    throw new AppError(
+      500,
+      `Görsel yüklenemedi: ${uploadError.message}${storageKeyHint()}`,
+      "UPLOAD_FAILED",
+    );
   }
 
   const { data: publicUrlData } = supabaseAdmin.storage.from(AVATARS_BUCKET).getPublicUrl(storagePath);
@@ -65,6 +81,55 @@ export async function uploadAvatar(
   // Eski gorseli temizle - basarisiz olursa sessizce gec, kullanicinin
   // yeni yuklemesini engellemesin.
   if (existing.avatarUrl) {
+    const oldPath = extractStoragePath(existing.avatarUrl);
+    if (oldPath) {
+      await supabaseAdmin.storage.from(AVATARS_BUCKET).remove([oldPath]).catch(() => {});
+    }
+  }
+
+  return updated;
+}
+
+// Frontend'in public/avatars/ altinda sundugu hazir avatarlar. Beyaz liste
+// sart: avatarUrl dogrudan <img src> olarak basildigi icin serbest birakmak
+// kullanicinin profiline istedigi dis adresi koymasina (izleme pikseli,
+// referer sizintisi) izin verirdi.
+export const AVATAR_PRESETS = [
+  "nova",
+  "orbit",
+  "prism",
+  "pulse",
+  "ridge",
+  "flux",
+  "arc",
+  "quartz",
+  "slate",
+] as const;
+
+export type AvatarPreset = (typeof AVATAR_PRESETS)[number];
+
+function isPreset(value: string): value is AvatarPreset {
+  return (AVATAR_PRESETS as readonly string[]).includes(value);
+}
+
+export async function setPresetAvatar(userId: string, preset: string) {
+  if (!isPreset(preset)) {
+    throw new AppError(400, "Geçersiz avatar seçimi", "VALIDATION_ERROR");
+  }
+
+  const existing = await prisma.user.findUnique({ where: { id: userId }, select: { avatarUrl: true } });
+  if (!existing) throw new NotFoundError("Kullanıcı");
+
+  const updated = await prisma.user.update({
+    where: { id: userId },
+    data: { avatarUrl: `/avatars/${preset}.svg` },
+    select: { id: true, avatarUrl: true },
+  });
+
+  // Daha once Storage'a yuklenmis bir gorsel varsa birak kalmasin. Hazir
+  // avatarlar Storage'a dokunmadigi icin bu adim atlanabilir olmali:
+  // extractStoragePath zaten preset yollari icin null doner.
+  if (existing.avatarUrl && supabaseAdmin) {
     const oldPath = extractStoragePath(existing.avatarUrl);
     if (oldPath) {
       await supabaseAdmin.storage.from(AVATARS_BUCKET).remove([oldPath]).catch(() => {});

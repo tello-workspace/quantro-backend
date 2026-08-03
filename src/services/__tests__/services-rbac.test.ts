@@ -5,7 +5,6 @@ import * as commentService from "@/services/comment.service";
 import * as checklistService from "@/services/checklist.service";
 import * as labelService from "@/services/label.service";
 import * as columnService from "@/services/column.service";
-import * as watcherService from "@/services/watcher.service";
 import * as notificationService from "@/services/notification.service";
 import * as badgeService from "@/services/badge.service";
 import * as templateService from "@/services/template.service";
@@ -125,33 +124,6 @@ describe("column.service", () => {
 
     const column = await columnService.createColumn(project.id, { name: "Yeni", position: 5 }, admin.id);
     expect(column.name).toBe("Yeni");
-  });
-});
-
-describe("watcher.service", () => {
-  const orgIds: string[] = [];
-  const userIds: string[] = [];
-
-  afterEach(async () => {
-    await cleanup({ orgIds, userIds });
-    orgIds.length = 0;
-    userIds.length = 0;
-  });
-
-  it("uye karti izleyebilir ve izlemeyi birakabilir", async () => {
-    const { admin, member, org, todo } = await createWorkspace();
-    orgIds.push(org.id);
-    userIds.push(admin.id, member.id);
-    const card = await createCard(todo.id, admin.id);
-
-    await watcherService.watchCard(card.id, member.id);
-    const watching = await watcherService.getWatchStatus(card.id, member.id);
-    expect(watching.isWatching).toBe(true);
-    expect(watching.watcherCount).toBe(1);
-
-    await watcherService.unwatchCard(card.id, member.id);
-    const unwatched = await watcherService.getWatchStatus(card.id, member.id);
-    expect(unwatched.isWatching).toBe(false);
   });
 });
 

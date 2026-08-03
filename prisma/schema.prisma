@@ -52,7 +52,9 @@ enum NotificationType {
   REQUEST_REJECTED // talebin reddedildi
   MENTIONED // bir yorumda @isim ile etiketlendin
   AUTOMATION // bir otomasyon kurali seni bilgilendirdi
-  WATCHED_CARD_ACTIVITY // izledigin bir kartta yorum/tasima oldu
+  // WATCHED_CARD_ACTIVITY kart izleme ozelligiyle birlikte kaldirildi. Enum
+  // degeri veritabaninda birakildi: Postgres'te enum degeri silmek tipi
+  // bastan yaratmayi gerektiriyor ve kullanilmayan bir deger zarar vermiyor.
 }
 
 enum AutomationTrigger {
@@ -170,7 +172,6 @@ model User {
   badges                  UserBadge[]
   uploadedAttachments     CardAttachment[]
   createdAutomationRules  AutomationRule[]
-  watchedCards            CardWatcher[]
   createdCardTemplates    CardTemplate[]
 }
 
@@ -461,7 +462,6 @@ model Card {
   changeRequests    ChangeRequest[]
   attachments       CardAttachment[]
   checklistItems    ChecklistItem[]
-  watchers          CardWatcher[]
   subtasks          Card[]                 @relation("CardParent")
   customFieldValues CardCustomFieldValue[]
 
@@ -475,20 +475,6 @@ model Card {
 model CardAssignee {
   cardId String
   userId String
-
-  card Card @relation(fields: [cardId], references: [id], onDelete: Cascade)
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@id([cardId, userId])
-}
-
-// Atanmamis ama karttaki gelismelerden (yorum, tasima) haberdar olmak
-// isteyen kisiler. CardAssignee ile ayni desen ama sorumluluk anlami yok -
-// sadece bildirim abonesi.
-model CardWatcher {
-  cardId    String
-  userId    String
-  createdAt DateTime @default(now())
 
   card Card @relation(fields: [cardId], references: [id], onDelete: Cascade)
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)

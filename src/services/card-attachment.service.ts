@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
 import { NotFoundError, ForbiddenError, AppError } from "@/utils/errors";
-import { supabaseAdmin, ATTACHMENTS_BUCKET } from "@/lib/supabaseAdmin";
+import { supabaseAdmin, ATTACHMENTS_BUCKET, storageKeyHint } from "@/lib/supabaseAdmin";
 import { broadcastToProject, SocketEvents } from "@/server/socket";
 import {
   ALLOWED_MIME_TYPES,
@@ -115,7 +115,20 @@ export async function uploadAttachment(
     .upload(storagePath, effectiveBuffer, { contentType: effectiveMimeType });
 
   if (uploadError) {
-    throw new AppError(500, "Dosya yüklenemedi", "UPLOAD_FAILED");
+    // Gercek Supabase hatasini yutma - bkz. avatar.service.ts'teki ayni not.
+    console.error("[attachment] Supabase upload hatasi:", {
+      bucket: ATTACHMENTS_BUCKET,
+      storagePath,
+      contentType: file.type,
+      size: file.size,
+      message: uploadError.message,
+      name: uploadError.name,
+    });
+    throw new AppError(
+      500,
+      `Dosya yüklenemedi: ${uploadError.message}${storageKeyHint()}`,
+      "UPLOAD_FAILED",
+    );
   }
 
   const attachment = await prisma.cardAttachment.create({
