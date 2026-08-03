@@ -57,37 +57,3 @@ export async function getProjectActivities(projectId: string, userId: string, li
     },
   });
 }
-
-async function checkCardAccess(cardId: string, userId: string) {
-  const card = await prisma.card.findUnique({
-    where: { id: cardId },
-    select: { column: { select: { project: { select: { organizationId: true } } } } },
-  });
-  if (!card) throw new NotFoundError("Kart");
-
-  const member = await prisma.organizationMember.findUnique({
-    where: {
-      organizationId_userId: {
-        organizationId: card.column.project.organizationId,
-        userId,
-      },
-    },
-  });
-  if (!member) throw new ForbiddenError("Bu karta erişim yetkiniz yok");
-}
-
-// Kart bazli aktivite gecmisi (TaskModal'daki zaman cizelgesi icin).
-// Proje aktivitesinden farkli olarak sadece bu karta ait olaylari doner.
-export async function getCardActivities(cardId: string, userId: string, limit = 30) {
-  await checkCardAccess(cardId, userId);
-
-  return prisma.activity.findMany({
-    where: { cardId },
-    orderBy: { createdAt: "desc" },
-    take: limit,
-    include: {
-      user: { select: { id: true, name: true } },
-      card: { select: { id: true, title: true } },
-    },
-  });
-}
