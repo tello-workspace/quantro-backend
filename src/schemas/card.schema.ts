@@ -8,7 +8,6 @@ export const createCardSchema = z.object({
   dueDate: z.string().nullable().optional(),
   startDate: z.string().nullable().optional(),
   position: z.number().optional(),
-    sprintId: z.string().nullable().optional(),
   parentCardId: z.string().nullable().optional(),
 });
 
@@ -30,7 +29,6 @@ export const updateCardSchema = z.object({
   startDate: z.string().nullable().optional(),
   columnId: z.string().optional(),
   position: z.number().optional(),
-    sprintId: z.string().nullable().optional(),
   parentCardId: z.string().nullable().optional(),
 });
 

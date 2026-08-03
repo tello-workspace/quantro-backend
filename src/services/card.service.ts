@@ -136,10 +136,6 @@ export async function createCard(columnId: string, input: CreateCardInput, userI
   const assigneeIds = input.assigneeIds ?? [];
   await validateAssignees(columnId, assigneeIds);
 
-  if (input.sprintId) {
-    const sprint = await prisma.sprint.findUnique({ where: { id: input.sprintId }, select: { projectId: true } });
-    if (!sprint || sprint.projectId !== projectId) throw new NotFoundError("Sprint");
-  }
   if (input.parentCardId) {
     await validateParentCard(projectId, undefined, input.parentCardId);
   }
@@ -161,7 +157,6 @@ export async function createCard(columnId: string, input: CreateCardInput, userI
       startDate: input.startDate ? new Date(input.startDate) : undefined,
       position,
       lastActivityAt: new Date(),
-      sprintId: input.sprintId ?? undefined,
       parentCardId: input.parentCardId ?? undefined,
       assignees: {
         create: assigneeIds.map((id) => ({ userId: id })),
@@ -190,7 +185,6 @@ export async function createCard(columnId: string, input: CreateCardInput, userI
     dueDate: card.dueDate?.toISOString() ?? null,
     startDate: card.startDate?.toISOString() ?? null,
     position: card.position,
-    sprintId: card.sprintId,
     parentCardId: card.parentCardId,
   });
 
@@ -249,7 +243,6 @@ export async function getCardById(cardId: string, userId: string) {
       blockedBy: {
         include: { blocker: { select: { id: true, title: true } } },
       },
-      sprint: { select: { id: true, name: true, status: true } },
       parent: { select: { id: true, title: true } },
       subtasks: {
         select: { id: true, title: true, column: { select: { isDone: true } } },
@@ -300,7 +293,6 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
     input.priority !== undefined ||
     input.dueDate !== undefined ||
     input.startDate !== undefined ||
-    input.sprintId !== undefined ||
     input.parentCardId !== undefined;
 
   if (icerikAlanlariDegisiyor && role !== "ADMIN") {
@@ -309,10 +301,6 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
     );
   }
 
-  if (input.sprintId) {
-    const sprint = await prisma.sprint.findUnique({ where: { id: input.sprintId }, select: { projectId: true } });
-    if (!sprint || sprint.projectId !== projectId) throw new NotFoundError("Sprint");
-  }
   if (input.parentCardId) {
     await validateParentCard(projectId, cardId, input.parentCardId);
   }
@@ -347,7 +335,6 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
   if (input.priority !== undefined) updateData.priority = input.priority as Priority;
   if (input.dueDate !== undefined) updateData.dueDate = input.dueDate ? new Date(input.dueDate) : null;
   if (input.startDate !== undefined) updateData.startDate = input.startDate ? new Date(input.startDate) : null;
-  if (input.sprintId !== undefined) updateData.sprintId = input.sprintId;
   if (input.parentCardId !== undefined) updateData.parentCardId = input.parentCardId;
   if (input.columnId !== undefined) updateData.columnId = input.columnId;
   if (input.position !== undefined) updateData.position = input.position;
@@ -467,7 +454,6 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
     dueDate: updated.dueDate?.toISOString() ?? null,
     startDate: updated.startDate?.toISOString() ?? null,
     position: updated.position,
-    sprintId: updated.sprintId,
     parentCardId: updated.parentCardId,
   });
 

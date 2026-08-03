@@ -8,7 +8,6 @@ import * as columnService from "@/services/column.service";
 import * as notificationService from "@/services/notification.service";
 import * as badgeService from "@/services/badge.service";
 import * as templateService from "@/services/template.service";
-import * as sprintService from "@/services/sprint.service";
 import * as boardService from "@/services/board.service";
 import { ForbiddenError, NotFoundError } from "@/utils/errors";
 
@@ -212,29 +211,6 @@ describe("template.service", () => {
 
     const template = await templateService.createTemplateFromCard(card.id, "Haftalik", admin.id);
     expect(template).toMatchObject({ name: "Haftalik" });
-  });
-});
-
-describe("sprint.service", () => {
-  const orgIds: string[] = [];
-  const userIds: string[] = [];
-
-  afterEach(async () => {
-    await cleanup({ orgIds, userIds });
-    orgIds.length = 0;
-    userIds.length = 0;
-  });
-
-  it("ADMIN sprint olusturur, liste gorulur", async () => {
-    const { admin, org, project } = await createWorkspace();
-    orgIds.push(org.id);
-    userIds.push(admin.id);
-
-    const sprint = await sprintService.createSprint(project.id, { name: "Sprint 1" }, admin.id);
-    expect(sprint.name).toBe("Sprint 1");
-
-    const sprints = await sprintService.listSprints(project.id, admin.id);
-    expect(sprints.some((s) => s.id === sprint.id)).toBe(true);
   });
 });
 
