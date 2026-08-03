@@ -1,5 +1,35 @@
 import { prisma } from "@/lib/prisma";
 import { NotFoundError, ForbiddenError } from "@/utils/errors";
+import { supabaseAdmin, ATTACHMENTS_BUCKET } from "@/lib/supabaseAdmin";
+
+// Kapak gorselleri icin imzali URL. Depolama yapilandirilmamissa veya
+// imzalama basarisiz olursa bos harita doner: kapak gorseli bir suslemedir,
+// yokluğu panoyu calismaz hale getirmemeli.
+const KAPAK_URL_TTL_SANIYE = 60 * 60; // 1 saat - pano oturumu icin yeterli
+
+async function imzaliKapakUrlleri(yollar: string[]): Promise<Map<string, string>> {
+  const harita = new Map<string, string>();
+  if (!supabaseAdmin || yollar.length === 0) return harita;
+
+  // Ayni gorsel birden fazla kartta olamaz ama yine de tekillestiriyoruz.
+  const tekil = [...new Set(yollar)];
+
+  try {
+    const { data, error } = await supabaseAdmin.storage
+      .from(ATTACHMENTS_BUCKET)
+      .createSignedUrls(tekil, KAPAK_URL_TTL_SANIYE);
+
+    if (error || !data) return harita;
+
+    for (const kayit of data) {
+      if (kayit.path && kayit.signedUrl) harita.set(kayit.path, kayit.signedUrl);
+    }
+  } catch (err) {
+    console.warn("[board] Kapak görselleri imzalanamadı:", err);
+  }
+
+  return harita;
+}
 
 // Proje + uyelik tek sorguda: onceden proje bir sorgu, uyelik ayri bir
 // sorgu ile cekiliyordu (iki gidis-donus). Iliski uzerinden filtreleyerek
@@ -49,11 +79,31 @@ export async function getBoard(projectId: string, userId: string) {
             // Panoda sadece "3/7" ilerleme rozeti icin - madde metinleri
             // TaskModal acilinca ayri bir istekle cekiliyor.
             checklistItems: { select: { done: true } },
+            // Kapak gorseli: kartin EN ESKI gorsel eki kapak sayiliyor.
+            // Ayri bir "kapak" isareti (semada yeni alan + migration)
+            // gerektirmeyen, sifir yapilandirmali bir cozum; kullanici
+            // gorseli ekledigi anda kart panoda kapakli goruunuyor.
+            attachments: {
+              where: { mimeType: { startsWith: "image/" } },
+              orderBy: { createdAt: "asc" },
+              take: 1,
+              select: { storagePath: true },
+            },
           },
         },
       },
     }),
   ]);
+
+  // Kapak gorselleri private bucket'ta, imzali URL gerekiyor. Kart basina
+  // ayri istek atmak yerine TEK toplu cagri: 200 kartli bir panoda 200
+  // gidis-donus, panoyu acilir acilmaz kullanilamaz hale getirirdi.
+  const kapakYollari = columns
+    .flatMap((c) => c.cards)
+    .map((c) => c.attachments[0]?.storagePath)
+    .filter((p): p is string => !!p);
+
+  const kapakUrlleri = await imzaliKapakUrlleri(kapakYollari);
 
   const boardColumns: Record<string, { id: string; title: string; wipLimit: number | null; isDone: boolean; taskIds: string[] }> = {};
   const tasks: Record<string, unknown> = {};
@@ -81,6 +131,9 @@ export async function getBoard(projectId: string, userId: string) {
         })),
         checklistTotal: card.checklistItems.length,
         checklistDone: card.checklistItems.filter((c) => c.done).length,
+        coverUrl: card.attachments[0]
+          ? (kapakUrlleri.get(card.attachments[0].storagePath) ?? null)
+          : null,
       };
     }
     boardColumns[col.id] = {
