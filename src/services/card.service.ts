@@ -101,6 +101,32 @@ async function validateAssignees(columnId: string, assigneeIds: string[]) {
   }
 }
 
+// Kart basligi icin urun sinirimiz. Ayni deger createCardSchema,
+// change-request ve template semalarinda da geciyor.
+export const MAX_TITLE_LENGTH = 200;
+
+// Basligi SERVIS katmaninda kisaltiyoruz, reddetmiyoruz.
+//
+// Bu fonksiyonu route'un yani sira AI arac calistiricisi ve otomasyon motoru
+// da cagiriyor; onlar Zod semasindan gecmiyor. Reddetmek AI akisini
+// kullaniciya anlamsiz bir hatayla bolerdi - modelin urettigi uzun bir
+// cumleyi basliga sigdirmak, isi tamamen basarisiz saymaktan iyi. Tasan
+// kisim aciklamaya tasiniyor ki metin kaybolmasin.
+function normalizeTitle(input: { title: string; description?: string | null }) {
+  if (input.title.length <= MAX_TITLE_LENGTH) {
+    return { title: input.title, description: input.description };
+  }
+
+  const kisaltilmis = `${input.title.slice(0, MAX_TITLE_LENGTH - 1).trimEnd()}…`;
+  const tasan = input.title;
+  const aciklama = input.description?.trim()
+    ? `${input.description}\n\n---\n${tasan}`
+    : tasan;
+
+  console.warn(`[card] Baslik ${input.title.length} karakterdi, ${MAX_TITLE_LENGTH}'e kisaltildi.`);
+  return { title: kisaltilmis, description: aciklama };
+}
+
 export async function createCard(columnId: string, input: CreateCardInput, userId: string) {
   const { role, projectId } = await checkColumnAccess(columnId, userId);
   if (role !== "ADMIN") {
@@ -120,11 +146,15 @@ export async function createCard(columnId: string, input: CreateCardInput, userI
 
   const position = input.position ?? (await getNextPosition(columnId));
 
+  // AI ve otomasyon bu servisi dogrudan cagiriyor (route semasini atlayarak),
+  // sinir bu yuzden burada uygulaniyor.
+  const { title, description } = normalizeTitle(input);
+
   const card = await prisma.card.create({
     data: {
       columnId,
-      title: input.title,
-      description: input.description,
+      title,
+      description,
       creatorId: userId,
       priority: (input.priority as Priority) ?? "MEDIUM",
       dueDate: input.dueDate ? new Date(input.dueDate) : undefined,
@@ -246,6 +276,15 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
   });
   if (!card) throw new NotFoundError("Kart");
 
+  // Baslik sinirini yalnizca baslik GERCEKTEN degistiginde uyguluyoruz.
+  // Arayuz her kaydetmede tum alanlari geri gonderiyor; siniri kosulsuz
+  // uygulasaydik, gecmiste sinirin ustunde kaydedilmis bir kart (AI route
+  // semasini atlayarak olusturdugunda oluyordu) sonsuza dek duzenlenemez
+  // kalirdi - kullanici basligi kisaltmak isterse bile istek reddedilirdi.
+  if (input.title !== undefined && input.title !== card.title && input.title.length > MAX_TITLE_LENGTH) {
+    throw new ValidationError(`Kart başlığı en fazla ${MAX_TITLE_LENGTH} karakter olabilir`);
+  }
+
   const { role, projectId, columnName: oldColumnName } = await checkColumnAccess(card.columnId, userId);
 
   // Yetki modeli: yapisal degisiklikler ADMIN'e ait. Uye kart TASIYABILIR
@@ -259,7 +298,6 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
     input.title !== undefined ||
     input.description !== undefined ||
     input.priority !== undefined ||
-    input.storyPoints !== undefined ||
     input.dueDate !== undefined ||
     input.startDate !== undefined ||
     input.sprintId !== undefined ||

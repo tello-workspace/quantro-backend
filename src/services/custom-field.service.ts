@@ -70,7 +70,7 @@ export async function deleteCustomField(fieldId: string, userId: string) {
 
 // Uyeler de kendi kartlarindaki ek alan degerlerini doldurabilir - bu
 // AutomationRule/CustomFieldDefinition yaratma gibi yapisal bir degisiklik
-// degil, storyPoints/priority gibi bir "icerik" alani niteliginde ama
+// degil, priority gibi bir "icerik" alani niteliginde ama
 // ChangeRequest akisina sokmuyoruz cunku veri kaybi riski yok (upsert).
 export async function setCardCustomFieldValue(
   cardId: string,

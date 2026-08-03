@@ -37,7 +37,6 @@ export async function getMyAssignedCards(userId: string) {
     id: c.id,
     title: c.title,
     priority: c.priority,
-    storyPoints: c.storyPoints,
     dueDate: c.dueDate?.toISOString() ?? null,
     lastActivityAt: c.lastActivityAt.toISOString(),
     columnId: c.columnId,

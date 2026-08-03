@@ -109,7 +109,6 @@ export async function createCardFromTemplate(templateId: string, columnId: strin
       title: template.title,
       description: template.description ?? undefined,
       priority: template.priority,
-      storyPoints: template.storyPoints,
     },
     userId,
   );

@@ -44,7 +44,6 @@ export async function getProjectInsights(projectId: string, userId: string) {
       id: true,
       title: true,
       priority: true,
-      storyPoints: true,
       dueDate: true,
       lastActivityAt: true,
       columnId: true,
@@ -69,9 +68,9 @@ export async function getProjectInsights(projectId: string, userId: string) {
     }));
 
   // Iş yükü dengesi: Done disindaki kartlari assignee'ye gore GROUP BY.
-  // storyPoints girilmisse (gercek efor tahmini) onu kullan, girilmemisse
-  // oncelik agirligina dus (URGENT=3, HIGH=2, diger=1) - eskiden tek secenek
-  // buydu, story point eklenince gercek veri varsa tahminden daha isabetli.
+  // Agirlik oncelikten geliyor (URGENT=3, HIGH=2, diger=1). Daha once
+  // storyPoints varsa o kullaniliyordu; story point ozelligi urunden
+  // kaldirilinca tek olcut yeniden oncelik oldu.
   // Ortalamanin 1.5 kati ustundeki kisi "asiri yuklu" isaretlenir.
   const workloadMap = new Map<
     string,
@@ -232,10 +231,12 @@ export async function getSprintBurndown(sprintId: string, userId: string) {
 
   const cards = await prisma.card.findMany({
     where: { sprintId, isArchived: false },
-    select: { id: true, storyPoints: true },
+    select: { id: true },
   });
-  const totalPoints = cards.reduce((sum, c) => sum + (c.storyPoints ?? 1), 0);
-  const cardPoints = new Map(cards.map((c) => [c.id, c.storyPoints ?? 1]));
+  // Story point kaldirildigi icin burndown artik kart SAYISI uzerinden
+  // hesaplaniyor: her kart 1 puan. Egri ayni sekilde okunur, birim degisti.
+  const totalPoints = cards.length;
+  const cardPoints = new Map(cards.map((c) => [c.id, 1]));
 
   const start = sprint.startDate ?? sprint.createdAt;
   const end = sprint.endDate ?? new Date();
