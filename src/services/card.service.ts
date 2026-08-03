@@ -10,7 +10,7 @@ import type { Priority } from "@prisma/client";
 
 const assigneeInclude = {
   assignees: {
-    include: { user: { select: { id: true, name: true, email: true } } },
+    include: { user: { select: { id: true, name: true, email: true, avatarUrl: true } } },
   },
 } as const;
 
@@ -156,7 +156,7 @@ export async function createCard(columnId: string, input: CreateCardInput, userI
     description: card.description,
     columnId: card.columnId,
     projectId,
-    assignees: card.assignees.map((a) => ({ id: a.user.id, name: a.user.name })),
+    assignees: card.assignees.map((a) => ({ id: a.user.id, name: a.user.name, avatarUrl: a.user.avatarUrl })),
     priority: card.priority,
     dueDate: card.dueDate?.toISOString() ?? null,
     startDate: card.startDate?.toISOString() ?? null,
@@ -211,7 +211,7 @@ export async function getCardById(cardId: string, userId: string) {
       column: { select: { id: true, name: true, projectId: true } },
       comments: {
         orderBy: { createdAt: "desc" },
-        include: { author: { select: { id: true, name: true, email: true } } },
+        include: { author: { select: { id: true, name: true, email: true, avatarUrl: true } } },
       },
       labels: { include: { label: true } },
       blocking: {

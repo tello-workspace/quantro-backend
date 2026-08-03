@@ -49,7 +49,7 @@ export async function getProjectInsights(projectId: string, userId: string) {
       lastActivityAt: true,
       columnId: true,
       column: { select: { id: true, name: true } },
-      assignees: { select: { userId: true, user: { select: { id: true, name: true } } } },
+      assignees: { select: { userId: true, user: { select: { id: true, name: true, avatarUrl: true } } } },
       blockedBy: {
         select: { blocker: { select: { id: true, column: { select: { isDone: true } } } } },
       },
@@ -75,7 +75,7 @@ export async function getProjectInsights(projectId: string, userId: string) {
   // Ortalamanin 1.5 kati ustundeki kisi "asiri yuklu" isaretlenir.
   const workloadMap = new Map<
     string,
-    { user: { id: string; name: string }; weightedLoad: number; cardCount: number }
+    { user: { id: string; name: string; avatarUrl?: string | null }; weightedLoad: number; cardCount: number }
   >();
   for (const card of activeCards) {
     const weight = card.storyPoints ?? PRIORITY_WEIGHT[card.priority];
@@ -101,6 +101,7 @@ export async function getProjectInsights(projectId: string, userId: string) {
     .map((e) => ({
       userId: e.user.id,
       userName: e.user.name,
+      avatarUrl: (e.user as { avatarUrl?: string | null }).avatarUrl ?? null,
       cardCount: e.cardCount,
       weightedLoad: e.weightedLoad,
       overloaded: averageLoad > 0 && e.weightedLoad > averageLoad * OVERLOAD_MULTIPLIER,
@@ -266,50 +267,4 @@ export async function getSprintBurndown(sprintId: string, userId: string) {
   });
 
   return { sprintId, totalPoints, startDate: start.toISOString(), endDate: end.toISOString(), series };
-}
-
-// Basitlestirilmis "kumulatif akis": her gun icin o gune kadar OLUSTURULAN
-// (CARD_CREATED aktivitesi) ve o gune kadar TAMAMLANAN (CARD_COMPLETED)
-// kartlarin kumulatif toplami. Jira'nin sutun-sutun tam CFD'sinden farkli
-// olarak sadece "girdi" ve "cikti" bantlarini gosterir - ikisi arasindaki
-// fark o anki aktif/devam eden is miktarini temsil eder.
-export async function getCumulativeFlow(projectId: string, userId: string, days: number = 14) {
-  await checkProjectAccess(projectId, userId);
-
-  const end = new Date();
-  const start = new Date(end.getTime() - (days - 1) * 24 * 60 * 60 * 1000);
-
-  const activities = await prisma.activity.findMany({
-    where: {
-      projectId,
-      type: { in: ["CARD_CREATED", "CARD_COMPLETED"] },
-      createdAt: { gte: new Date(start.getFullYear(), start.getMonth(), start.getDate()) },
-    },
-    select: { type: true, createdAt: true },
-    orderBy: { createdAt: "asc" },
-  });
-
-  // Baslangictan (start) once olusmus, hala acik olan kartlar icin taban
-  // deger: toplam kart sayisi - bu araliktaki yeni olusturmalar.
-  const totalCardsNow = await prisma.card.count({ where: { column: { projectId } } });
-  const createdInRange = activities.filter((a) => a.type === "CARD_CREATED").length;
-  const completedInRange = activities.filter((a) => a.type === "CARD_COMPLETED").length;
-  const baselineCreated = Math.max(totalCardsNow - createdInRange, 0);
-  const baselineCompleted = Math.max(
-    (await prisma.card.count({ where: { column: { projectId, isDone: true } } })) - completedInRange,
-    0,
-  );
-
-  const dayList = eachDay(start, end);
-  let createdCum = baselineCreated;
-  let completedCum = baselineCompleted;
-
-  const series = dayList.map((day) => {
-    const key = toDayKey(day);
-    createdCum += activities.filter((a) => a.type === "CARD_CREATED" && toDayKey(a.createdAt) === key).length;
-    completedCum += activities.filter((a) => a.type === "CARD_COMPLETED" && toDayKey(a.createdAt) === key).length;
-    return { date: key, created: createdCum, completed: completedCum, active: Math.max(createdCum - completedCum, 0) };
-  });
-
-  return { projectId, series };
 }

@@ -64,7 +64,7 @@ export async function getComments(cardId: string, userId: string) {
     where: { cardId },
     orderBy: { createdAt: "asc" },
     include: {
-      author: { select: { id: true, name: true, email: true } },
+      author: { select: { id: true, name: true, email: true, avatarUrl: true } },
     },
   });
 
@@ -81,7 +81,7 @@ export async function createComment(cardId: string, input: CreateCommentInput, u
       text: input.text,
     },
     include: {
-      author: { select: { id: true, name: true, email: true } },
+      author: { select: { id: true, name: true, email: true, avatarUrl: true } },
     },
   });
 
@@ -119,7 +119,7 @@ export async function getCommentById(commentId: string, userId: string) {
   const comment = await prisma.comment.findUnique({
     where: { id: commentId },
     include: {
-      author: { select: { id: true, name: true, email: true } },
+      author: { select: { id: true, name: true, email: true, avatarUrl: true } },
     },
   });
   if (!comment) throw new NotFoundError("Yorum");
@@ -144,7 +144,7 @@ export async function updateComment(commentId: string, input: UpdateCommentInput
     where: { id: commentId },
     data: { text: input.text },
     include: {
-      author: { select: { id: true, name: true, email: true } },
+      author: { select: { id: true, name: true, email: true, avatarUrl: true } },
     },
   });
 
