@@ -230,6 +230,29 @@ const TOOLS: {
     },
   ];
 
+// Uyenin kullanamadigi araclar. Sema her istekte token olarak odendigi icin
+// (ve model yine de cagirmayi deneyip sunucudan 403 yiyebildigi icin) bu iki
+// arac uyeye hic gonderilmiyor - hem tasarruf hem savunma.
+const ADMIN_ONLY_TOOLS = new Set(["create_card", "assign_users"]);
+
+function toolsForRole(role: "ADMIN" | "MEMBER") {
+  return role === "ADMIN" ? TOOLS : TOOLS.filter((t) => !ADMIN_ONLY_TOOLS.has(t.function.name));
+}
+
+// Grafik talimati ~445 token. Kullanici acikca grafik istemedigi surece
+// gondermenin anlami yok; requiresBoardContext ile ayni yaklasim.
+function wantsChart(messages: ChatMessage[]): boolean {
+  const recentText = messages
+    .slice(-3)
+    .map((m) => m.content || "")
+    .join(" ")
+    .toLowerCase();
+
+  return ["grafik", "graf", "chart", "pie", "bar", "line", "görselleştir", "gorsellestir", "diyagram"].some(
+    (k) => recentText.includes(k),
+  );
+}
+
 // ─── Tool Executor ──────────────────────────────────────────────────
 
 async function executeTool(
@@ -609,10 +632,10 @@ interface GeminiContent {
 
 // OpenAI tool tanimlarini Gemini'nin functionDeclarations formatina cevirir.
 // Parametre semasi ikisinde de JSON Schema oldugu icin oldugu gibi gecirilir.
-function toGeminiFunctionDeclarations() {
+function toGeminiFunctionDeclarations(tools: typeof TOOLS = TOOLS) {
   return [
     {
-      functionDeclarations: TOOLS.map((t) => ({
+      functionDeclarations: tools.map((t) => ({
         name: t.function.name,
         description: t.function.description,
         parameters: t.function.parameters,
@@ -683,13 +706,14 @@ async function callGeminiOnce(
   systemInstruction: string,
   withTools: boolean,
   signal?: AbortSignal,
+  tools: typeof TOOLS = TOOLS,
 ): Promise<GeminiCallResult> {
   const body: Record<string, unknown> = { contents };
   if (systemInstruction) {
     body.system_instruction = { parts: [{ text: systemInstruction }] };
   }
   if (withTools) {
-    body.tools = toGeminiFunctionDeclarations();
+    body.tools = toGeminiFunctionDeclarations(tools);
   }
 
   const url = `${provider.baseUrl}/models/${provider.model}:generateContent?key=${provider.apiKey}`;
@@ -748,13 +772,14 @@ async function callGeminiRaw(
   systemInstruction: string,
   withTools: boolean,
   signal?: AbortSignal,
+  tools: typeof TOOLS = TOOLS,
 ): Promise<{ parts: GeminiPart[]; error?: string }> {
   const MAX_RETRIES = 3;
   const DELAYS = [3000, 5000, 8000];
 
   let lastResult: GeminiCallResult | null = null;
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    const result = await callGeminiOnce(provider, contents, systemInstruction, withTools, signal);
+    const result = await callGeminiOnce(provider, contents, systemInstruction, withTools, signal, tools);
     lastResult = result;
 
     if (!result.retryable) return result;
@@ -778,6 +803,7 @@ async function runGeminiWithTools(
   userId: string,
   projectId: string,
   signal?: AbortSignal,
+  tools: typeof TOOLS = TOOLS,
 ): Promise<string> {
   const { contents, systemInstruction } = toGeminiContents(messages);
 
@@ -789,6 +815,7 @@ async function runGeminiWithTools(
       systemInstruction,
       true,
       signal,
+      tools,
     );
     if (error) return error;
 
@@ -869,6 +896,7 @@ function buildSystemPrompt(
   userName: string,
   userRole: "ADMIN" | "MEMBER",
   language: string = "tr",
+  includeChartGuide: boolean = true,
 ): string {
   const isAdmin = userRole === "ADMIN";
 
@@ -905,18 +933,17 @@ mutlaka öncelikle "list_columns" veya "list_members" araçlarını (tool) çağ
     ? `Respond to users in a concise, clear, and professional English manner. Summarize what you did when the operation is successful. IMPORTANT: Write all replies in English.`
     : `Kullanıcılara kısa, net ve Türkçe cevap ver. İşlem başarılı olduğunda ne yaptığını özetle.`;
 
-  return `${systemPersona}
-
-Şu an seninle konuşan kullanıcı: ${userName} (rol: ${userRole})
-
-${permissions}
-
+  // Atama ve yetkinlik esleme talimatlari yalnizca ADMIN'e gonderiliyor:
+  // uye assign_users/create_card cagiramadigi icin bu ~770 token onun
+  // isteginde tamamen bosa gidiyordu.
+  const assignmentSection = isAdmin
+    ? `
 Görev atama kuralı: Kullanıcı "X görevini Ahmet'e ata" derse, aşağıdaki listeden
 Ahmet'in kullanıcı ID'sini ve kartın ID'sini bulup assign_users aracını çağır.
 Bir karta birden fazla kişi atanabilir; assigneeIds gönderdiğin liste kartın YENİ
 atanan listesidir (mevcutlara eklemek istiyorsan eskileri de listeye koy).
 
-YETKİNLİK BAZLI OTOMATİK ATAMA (SADECE ADMIN İÇİN):
+YETKİNLİK BAZLI OTOMATİK ATAMA:
 Kullanıcı açıkça birini belirtmeden "bir backend görevi oluştur", "bunu frontendciye ata" gibi
 ifadeler kullanırsa, aşağıdaki adımları uygula:
 
@@ -941,12 +968,15 @@ Adım 4 — 🟡 Fallback (eşleşme yoksa):
   Eğer gerekli yetkinliğe (ne rozet ne profil) sahip hiçbir üye bulamazsan, KESİNLİKLE
   assign_users ÇAĞIRMA. Görevi oluştur (create_card) ama kimseye atama. Kartın açıklamasına
   veya yanıtında "Bu görev için uygun yetkinlik/uzmanlığa sahip bir üye bulunamadı" yaz.
+`
+    : "";
 
-NOT: Proje ID'si, kolon ID'leri ve kullanıcı ID'leri aşağıda listelenmiştir. Kullanıcıya ID sorma, doğrudan kullan.
-
+  // Grafik talimati sadece kullanici grafik istediginde ekleniyor (~445 token).
+  const chartSection = includeChartGuide
+    ? `
 GRAFİK OLUŞTURMA YETENEĞİ:
-Kullanıcı senden proje istatistikleri, iş yoğunluğu, tamamlanan işler veya kartların dağılımı ile ilgili görsel bir grafik/graf çizmesini AÇIKÇA talep ettiğinde (örneğin "grafik göster", "grafik çiz", "yoğunluk grafiği ver" vb.), yanıtında aşağıdaki özel markdown kod bloğunu kullan.
-Kullanıcı açıkça bir grafik istemediyse (örneğin sadece "projede ne durumdayız", "hangi kartlar var", "X kartını oluştur" vb. dediğinde) KESİNLİKLE chart kod bloğu OLUŞTURMA, yanıtını normal metin olarak ver.
+Kullanıcı proje istatistikleri, iş yoğunluğu veya kartların dağılımı için görsel bir
+grafik talep etti. Yanıtında aşağıdaki markdown kod bloğunu kullan:
 
 \`\`\`chart
 {
@@ -957,12 +987,19 @@ Kullanıcı açıkça bir grafik istemediyse (örneğin sadece "projede ne durum
   ]
 }
 \`\`\`
-Örnek durumlar:
-1. Yoğunluk (İş yükü) Grafiği: Her kullanıcıya atanmış kart sayıları.
-2. Sütun Dağılımı Grafiği: Kolonlardaki kart sayıları (To Do, In Progress, Done vb.).
-3. Öncelik Dağılımı Grafiği: Öncelik derecelerine göre kart sayıları (LOW, MEDIUM, HIGH, URGENT).
-Bu formatı birebir koru, kod bloğunun dilini "chart" olarak belirt ve geçerli bir JSON objesi sağla. Yanıtında bu bloğun yanına açıklamalar ekleyebilirsin.
+Formatı birebir koru, kod bloğunun dilini "chart" olarak belirt ve geçerli bir JSON
+objesi ver. Bloğun yanına açıklama ekleyebilirsin.
+`
+    : "";
 
+  return `${systemPersona}
+
+Şu an seninle konuşan kullanıcı: ${userName} (rol: ${userRole})
+
+${permissions}
+${assignmentSection}
+NOT: Proje ID'si, kolon ID'leri ve kullanıcı ID'leri aşağıda listelenmiştir. Kullanıcıya ID sorma, doğrudan kullan.
+${chartSection}
 Mevcut proje: "${projectName}"
 
 ${contextSection}
@@ -1029,10 +1066,13 @@ async function getBoardContext(projectId: string): Promise<string> {
         const badges = m.user.badges?.map((ub: any) => ub.badge.name).join(", ");
         const extras: string[] = [];
         if (m.user.title) extras.push(`Unvan: ${m.user.title}`);
-        if (badges) extras.push(`Yetkinlik (rozet): ${badges}`);
-        if (m.user.expertiseAreas?.length) extras.push(`Uzmanlık alanları (profil): ${m.user.expertiseAreas.join(", ")}`);
-        if (m.user.languages?.length) extras.push(`Bildiği diller (profil): ${m.user.languages.join(", ")}`);
-        return `  - ${m.user.name} (ID: ${m.user.id}, email: ${m.user.email})${extras.length ? ` — ${extras.join(" | ")}` : ""}`;
+        if (badges) extras.push(`Rozet: ${badges}`);
+        if (m.user.expertiseAreas?.length) extras.push(`Uzmanlık: ${m.user.expertiseAreas.join(", ")}`);
+        if (m.user.languages?.length) extras.push(`Diller: ${m.user.languages.join(", ")}`);
+        // E-posta bilerek yok: model kisileri her zaman ID ile hedefliyor,
+        // adres hicbir arac tarafindan kullanilmiyordu ve uye basina bosuna
+        // ~10 token yaziyordu.
+        return `  - ${m.user.name} (ID: ${m.user.id})${extras.length ? ` — ${extras.join(" | ")}` : ""}`;
       })
       .join("\n")}`
   );
@@ -1040,8 +1080,11 @@ async function getBoardContext(projectId: string): Promise<string> {
   // Kolonlar ve kartlar
   for (const col of project.columns) {
     const cardCount = col.cards.length;
+    // 15 -> 8: sutun basina 15 kart, dolu bir panoda tek basina 1500+ token
+    // ediyordu. Model daha fazlasina ihtiyac duyarsa list_columns aracini
+    // cagirabiliyor, yani bilgi kaybi degil gecikmeli yukleme.
     const cardList = col.cards
-      .slice(0, 15)
+      .slice(0, 8)
       .map((c) => {
         let info = `    - "${c.title}" (ID: ${c.id})`;
         if (c.dueDate) info += ` (bitiş: ${new Date(c.dueDate).toLocaleDateString("tr-TR")})`;
@@ -1144,13 +1187,18 @@ export async function sendMessage(
 
   if (!project) return "⚠️ Proje bulunamadı.";
   if (!membership) return "⚠️ Bu projeye erişim yetkiniz yok.";
+  const role = membership.role as "ADMIN" | "MEMBER";
   const systemPrompt = buildSystemPrompt(
     project.name,
     boardContext,
     membership.user.name,
-    membership.role as "ADMIN" | "MEMBER",
+    role,
     membership.user.language || "tr",
+    wantsChart(recentMessages),
   );
+  // Araclar da role gore filtreleniyor - uyeye create_card/assign_users
+  // semasi hic gonderilmiyor.
+  const availableTools = toolsForRole(role);
 
   const apiMessages = [
     { role: "system" as const, content: systemPrompt },
@@ -1169,6 +1217,7 @@ export async function sendMessage(
         userId,
         projectId,
         controller.signal,
+        availableTools,
       );
     }
 
@@ -1195,7 +1244,7 @@ export async function sendMessage(
 
     for (let round = 0; round < MAX_ROUNDS; round++) {
       // Son turda tool göndermeyerek modeli düz metin cevap vermeye zorluyoruz
-      const activeTools = round < MAX_ROUNDS - 1 ? TOOLS : undefined;
+      const activeTools = round < MAX_ROUNDS - 1 ? availableTools : undefined;
       const reply = await callWithRetry(chatMessages, activeTools);
 
       if (!reply.tool_calls?.length) {
