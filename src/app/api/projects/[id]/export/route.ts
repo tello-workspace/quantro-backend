@@ -13,7 +13,6 @@ type BoardTask = {
   columnId: string;
   position: number;
   priority: string;
-  storyPoints: number | null;
   lastActivityAt: string;
   assignees: { id: string; name: string }[];
   labels: { id: string; name: string; color: string }[];
@@ -32,7 +31,7 @@ function csvEscape(value: string | number | null | undefined): string {
 // Record<string, unknown> oldugu icin gecerli BoardTask alanlarina tip
 // guvenli erisim icin helper kullanilir.
 function boardToCsv(board: { columns: Record<string, { id: string; title: string; wipLimit: number | null; isDone: boolean; taskIds: string[] }>; tasks: Record<string, Partial<BoardTask>> }): string {
-  const header = "column,card_id,title,priority,due_date,assignees,labels,story_points,checklist,description";
+  const header = "column,card_id,title,priority,due_date,assignees,labels,checklist,description";
   const rows: string[] = [header];
 
   for (const col of Object.values(board.columns)) {
@@ -48,7 +47,6 @@ function boardToCsv(board: { columns: Record<string, { id: string; title: string
           csvEscape(task.dueDate),
           csvEscape(task.assignees?.map((a) => a.name).join("; ")),
           csvEscape(task.labels?.map((l) => l.name).join("; ")),
-          csvEscape(task.storyPoints),
           `${task.checklistDone ?? 0}/${task.checklistTotal ?? 0}`,
           csvEscape(task.description),
         ].join(","),

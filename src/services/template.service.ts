@@ -52,7 +52,6 @@ export async function createTemplate(projectId: string, input: CreateTemplateInp
       title: input.title,
       description: input.description,
       priority: input.priority ?? "MEDIUM",
-      storyPoints: input.storyPoints,
       checklistItems: input.checklistItems ?? [],
       createdById: userId,
     },
@@ -81,7 +80,6 @@ export async function createTemplateFromCard(cardId: string, name: string, userI
       title: card.title,
       description: card.description,
       priority: card.priority,
-      storyPoints: card.storyPoints,
       checklistItems: card.checklistItems.map((c) => c.text),
       createdById: userId,
     },
@@ -111,7 +109,6 @@ export async function createCardFromTemplate(templateId: string, columnId: strin
       title: template.title,
       description: template.description ?? undefined,
       priority: template.priority,
-      storyPoints: template.storyPoints,
     },
     userId,
   );

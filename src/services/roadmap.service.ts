@@ -37,7 +37,6 @@ export async function getProjectRoadmap(projectId: string, userId: string) {
       startDate: true,
       dueDate: true,
       priority: true,
-      storyPoints: true,
       parentCardId: true,
       column: { select: { id: true, name: true, isDone: true } },
       assignees: {
@@ -80,7 +79,6 @@ export async function getProjectRoadmap(projectId: string, userId: string) {
       startDate: c.startDate?.toISOString() ?? null,
       dueDate: c.dueDate?.toISOString() ?? null,
       priority: c.priority,
-      storyPoints: c.storyPoints,
       parentCardId: c.parentCardId,
       columnId: c.column.id,
       columnName: c.column.name,
