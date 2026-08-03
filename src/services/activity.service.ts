@@ -52,7 +52,9 @@ export async function getProjectActivities(projectId: string, userId: string, li
     orderBy: { createdAt: "desc" },
     take: limit,
     include: {
-      user: { select: { id: true, name: true } },
+      // avatarUrl: aktivite akisi her kaydin yaninda islemi yapan kisinin
+      // avatarini gosteriyor.
+      user: { select: { id: true, name: true, avatarUrl: true } },
       card: { select: { id: true, title: true } },
     },
   });
