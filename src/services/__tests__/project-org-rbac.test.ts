@@ -3,7 +3,7 @@ import { createWorkspace, createUser, uniq, cleanup } from "@/test/fixtures";
 import { prisma } from "@/lib/prisma";
 import * as projectService from "@/services/project.service";
 import * as orgService from "@/services/organization.service";
-import { ForbiddenError, NotFoundError, ConflictError } from "@/utils/errors";
+import { ForbiddenError, ConflictError } from "@/utils/errors";
 
 // Proje + organizasyon RBAC testleri:
 // - Proje olusturma sadece org ADMIN'ine (varsayilan 4 kolon acilir)

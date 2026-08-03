@@ -1492,6 +1492,7 @@ export async function analyzePushAndMoveCards(userId: string, commitMessage: str
         }
       },
       column: { isDone: false },
+      isArchived: false,
     },
     include: {
       column: {

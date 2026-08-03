@@ -39,7 +39,7 @@ export async function getProjectInsights(projectId: string, userId: string) {
 
   // "Done" olmayan sütunlardaki tüm kartlar - stale/is yükü/deadline hesabının hepsi bu küme üzerinden
   const activeCards = await prisma.card.findMany({
-    where: { column: { projectId, isDone: false } },
+    where: { column: { projectId, isDone: false }, isArchived: false },
     select: {
       id: true,
       title: true,
@@ -159,11 +159,11 @@ export async function getWeeklySummary(projectId: string, userId: string) {
 
   const [createdCards, completedCards, newComments, pendingStaleCount] = await Promise.all([
     prisma.card.findMany({
-      where: { column: { projectId }, createdAt: { gte: since } },
+      where: { column: { projectId }, createdAt: { gte: since }, isArchived: false },
       select: { creatorId: true, creator: { select: { id: true, name: true } } },
     }),
     prisma.card.findMany({
-      where: { column: { projectId, isDone: true }, updatedAt: { gte: since } },
+      where: { column: { projectId, isDone: true }, updatedAt: { gte: since }, isArchived: false },
       select: { id: true },
     }),
     prisma.comment.findMany({
@@ -230,7 +230,7 @@ export async function getSprintBurndown(sprintId: string, userId: string) {
   await checkProjectAccess(sprint.projectId, userId);
 
   const cards = await prisma.card.findMany({
-    where: { sprintId },
+    where: { sprintId, isArchived: false },
     select: { id: true, storyPoints: true },
   });
   const totalPoints = cards.reduce((sum, c) => sum + (c.storyPoints ?? 1), 0);
