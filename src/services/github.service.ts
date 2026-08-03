@@ -34,6 +34,24 @@ interface GithubRepo {
 
 const ISTEK_ZAMAN_ASIMI_MS = 8000;
 
+// Kimliksiz GitHub istegi IP basina saatte 60 ile sinirli ve Render'da cikis
+// IP'si PAYLASIMLI - kotayi ayni makinedeki diger kiracilar da tuketiyor.
+// Pratikte bu, token olmadan ozelligin calismayabilecegi anlamina geliyor.
+// Onbellek tek basina cozmuyor ama ayni profili tekrar tekrar sorgulamayi
+// (kullanicinin butona birkac kez basmasi tipik) kotadan dusurmuyor.
+const ONBELLEK_TTL_MS = 30 * 60 * 1000;
+const onbellek = new Map<string, { veri: GithubProfileOzeti; zaman: number }>();
+
+function onbellektenOku(username: string): GithubProfileOzeti | null {
+  const kayit = onbellek.get(username.toLowerCase());
+  if (!kayit) return null;
+  if (Date.now() - kayit.zaman > ONBELLEK_TTL_MS) {
+    onbellek.delete(username.toLowerCase());
+    return null;
+  }
+  return kayit.veri;
+}
+
 async function githubGet<T>(yol: string): Promise<T> {
   const controller = new AbortController();
   const zamanlayici = setTimeout(() => controller.abort(), ISTEK_ZAMAN_ASIMI_MS);
@@ -54,9 +72,23 @@ async function githubGet<T>(yol: string): Promise<T> {
       throw new AppError(404, "GitHub kullanıcısı bulunamadı", "NOT_FOUND");
     }
     if (res.status === 403 || res.status === 429) {
-      // Kimliksiz istekte saatlik 60 sinir var; kullaniciya "sonra dene"
-      // demek, anlamsiz bir hata gostermekten iyi.
-      throw new AppError(429, "GitHub istek sınırına takıldı, biraz sonra tekrar deneyin", "RATE_LIMITED");
+      // Mesaji sebebe gore ayiriyoruz: token yokken limit 60/saat ve Render'in
+      // cikis IP'si paylasimli oldugu icin kota cogu zaman bizim disimizda
+      // tukeniyor. "Biraz sonra dene" demek bu durumda yaniltici - beklemek
+      // cozmuyor, token eklemek cozuyor.
+      const tokenVar = !!process.env.GITHUB_TOKEN;
+      const sifirlanma = res.headers.get("x-ratelimit-reset");
+      const dakika = sifirlanma
+        ? Math.max(1, Math.ceil((Number(sifirlanma) * 1000 - Date.now()) / 60000))
+        : null;
+
+      throw new AppError(
+        429,
+        tokenVar
+          ? `GitHub istek sınırına takıldı${dakika ? `, ${dakika} dakika sonra tekrar deneyin` : ", biraz sonra tekrar deneyin"}`
+          : "GitHub istek sınırına takıldı. Sunucuda GITHUB_TOKEN tanımlı olmadığı için saatlik limit çok düşük (60) ve paylaşımlı IP üzerinden tükeniyor. Yöneticinizin GITHUB_TOKEN eklemesi gerekiyor.",
+        "RATE_LIMITED",
+      );
     }
     if (!res.ok) {
       throw new AppError(502, "GitHub'a ulaşılamadı", "UPSTREAM_ERROR");
@@ -92,6 +124,9 @@ export async function fetchGithubProfile(githubUrl: string): Promise<GithubProfi
     throw new ValidationError("Geçerli bir GitHub profil adresi girin (https://github.com/kullanici)");
   }
 
+  const onbellekli = onbellektenOku(username);
+  if (onbellekli) return onbellekli;
+
   const [user, repos] = await Promise.all([
     githubGet<GithubUser>(`/users/${username}`),
     // sort=pushed: kullanicinin SON dokundugu repolar. Yildiz sayisina gore
@@ -113,7 +148,7 @@ export async function fetchGithubProfile(githubUrl: string): Promise<GithubProfi
     .slice(0, 10)
     .map(([dil]) => dil);
 
-  return {
+  const ozet: GithubProfileOzeti = {
     username: user.login,
     name: user.name,
     bio: user.bio,
@@ -123,4 +158,7 @@ export async function fetchGithubProfile(githubUrl: string): Promise<GithubProfi
     publicRepos: user.public_repos,
     languages,
   };
+
+  onbellek.set(username.toLowerCase(), { veri: ozet, zaman: Date.now() });
+  return ozet;
 }
