@@ -44,6 +44,31 @@ export async function POST(request: NextRequest) {
   }
 }
 
+// Hazir avatar secimi. Yukleme (POST) ile ayni kaynagi hedefledigi icin ayni
+// route'ta duruyor; farki dosya degil, beyaz listedeki bir isim almasi.
+export async function PUT(request: NextRequest) {
+  const authError = await authenticate(request);
+  if (authError) return authError;
+
+  try {
+    const user = (request as AuthenticatedRequest).user;
+    const body = await request.json().catch(() => null);
+    const preset = (body as { preset?: unknown } | null)?.preset;
+
+    if (typeof preset !== "string") {
+      return errorResponse("preset alanı gerekli", 400, "VALIDATION_ERROR");
+    }
+
+    const updated = await avatarService.setPresetAvatar(user.id, preset);
+    return successResponse(updated);
+  } catch (error) {
+    if (error instanceof AppError) {
+      return errorResponse(error.message, error.statusCode, error.code);
+    }
+    return handleApiError(request, error, "Avatar seçilemedi");
+  }
+}
+
 export async function DELETE(request: NextRequest) {
   const authError = await authenticate(request);
   if (authError) return authError;

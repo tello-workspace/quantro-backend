@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
 import { NotFoundError, ForbiddenError, AppError } from "@/utils/errors";
-import { supabaseAdmin, ATTACHMENTS_BUCKET } from "@/lib/supabaseAdmin";
+import { supabaseAdmin, ATTACHMENTS_BUCKET, storageKeyHint } from "@/lib/supabaseAdmin";
 import { broadcastToProject, SocketEvents } from "@/server/socket";
 import {
   ALLOWED_MIME_TYPES,
@@ -124,7 +124,11 @@ export async function uploadAttachment(
       message: uploadError.message,
       name: uploadError.name,
     });
-    throw new AppError(500, `Dosya yüklenemedi: ${uploadError.message}`, "UPLOAD_FAILED");
+    throw new AppError(
+      500,
+      `Dosya yüklenemedi: ${uploadError.message}${storageKeyHint()}`,
+      "UPLOAD_FAILED",
+    );
   }
 
   const attachment = await prisma.cardAttachment.create({
