@@ -5,8 +5,7 @@ export const createTemplateSchema = z.object({
   title: z.string().min(1, "Kart başlığı gerekli").max(200),
   description: z.string().max(2000).nullable().optional(),
   priority: z.enum(["LOW", "MEDIUM", "HIGH", "URGENT"]).optional(),
-  storyPoints: z.number().int().min(0).max(999).nullable().optional(),
-  checklistItems: z.array(z.string().min(1).max(300)).max(50).optional(),
+    checklistItems: z.array(z.string().min(1).max(300)).max(50).optional(),
 });
 
 export const createTemplateFromCardSchema = z.object({

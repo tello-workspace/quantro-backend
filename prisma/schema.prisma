@@ -428,8 +428,6 @@ model Card {
   description    String?
   creatorId      String
   priority       Priority  @default(MEDIUM)
-  storyPoints    Int? // Jira'daki story point/tahmini efor - insight motorundaki
-  // is yuku hesabinda varsa oncelik agirligi yerine bu kullanilir (daha isabetli)
   dueDate        DateTime?
   startDate      DateTime?
   position       Float
@@ -514,7 +512,6 @@ model CardTemplate {
   title          String
   description    String?
   priority       Priority @default(MEDIUM)
-  storyPoints    Int?
   checklistItems String[] @default([])
   createdById    String
   createdAt      DateTime @default(now())
