@@ -1,0 +1,68 @@
+name: Analyze Push
+
+# Her push'tan sonra commit mesajini ve diff'i Quantro'ya gonderir; AI,
+# commit'i yazan gelistiriciye atanmis kartlardan hangilerinin durumu
+# degismeli diye karar verip kartlari uygun sutuna tasir ("fix #12" gibi bir
+# mesajda kart Done'a gecer).
+#
+# Analiz motoru (ai.service.ts analyzePushAndMoveCards) uzun suredir yaziliydi
+# ama endpoint yalnizca JWT kabul ettigi icin hicbir otomatik akisa
+# baglanamiyordu. Endpoint artik `x-cron-secret` + `authorEmail` ile de
+# calisiyor (bkz. api/ai/analyze-push/route.ts).
+#
+# CI'yi hic bloklamaz: analiz basarisiz olursa (AI kotasi dolu, yazarin
+# Quantro hesabi yok vb.) adim sessizce gecilir - kart tasima bir kolaylik,
+# push'u engellemesi icin bir sebep yok.
+on:
+  push:
+    branches: [main]
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Diff'i alabilmek icin bir onceki commit de gerekli
+          fetch-depth: 2
+
+      - name: Commit bilgisini topla ve gonder
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          API_URL: https://tello-backend.onrender.com
+        run: |
+          set -u
+
+          COMMIT_MESSAGE=$(git log -1 --pretty=%B)
+          AUTHOR_EMAIL=$(git log -1 --pretty=%ae)
+
+          # Diff'i sinirliyoruz: bazi commit'ler binlerce satir degistiriyor,
+          # tamamini gondermek hem istegi sisirir hem AI token limitini asar.
+          # Servis tarafinda da ayrica kirpma var.
+          DIFF=$(git diff HEAD~1 HEAD --unified=0 | head -c 12000 || true)
+
+          if [ -z "$AUTHOR_EMAIL" ]; then
+            echo "Yazar e-postasi bulunamadi, atlaniyor."
+            exit 0
+          fi
+
+          # jq ile guvenli JSON kurulumu - commit mesajinda tirnak/yeni satir
+          # olabilir, elle string birlestirmek bozuk govde uretirdi.
+          BODY=$(jq -n \
+            --arg m "$COMMIT_MESSAGE" \
+            --arg d "$DIFF" \
+            --arg e "$AUTHOR_EMAIL" \
+            '{commitMessage: $m, diff: $d, authorEmail: $e}')
+
+          HTTP=$(curl -sS -o /tmp/analyze-out.json -w "%{http_code}" \
+            -X POST "$API_URL/api/ai/analyze-push" \
+            -H "Content-Type: application/json" \
+            -H "x-cron-secret: $CRON_SECRET" \
+            --data "$BODY" || echo "000")
+
+          echo "HTTP $HTTP"
+          cat /tmp/analyze-out.json || true
+
+          if [ "$HTTP" != "200" ]; then
+            echo "Analiz uygulanamadi (HTTP $HTTP) - push etkilenmedi."
+          fi
