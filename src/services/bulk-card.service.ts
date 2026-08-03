@@ -21,6 +21,10 @@ export interface BulkInput {
   columnId?: string;
   assigneeIds?: string[];
   labelId?: string;
+  // Tasima icin kart basina hedef pozisyon. Verilmezse updateCard kartlari
+  // sutunun sonuna ekler; surukle-birak ile tasindiginda kullanici kartlari
+  // belirli bir noktaya birakiyor ve sonuc oraya oturmali.
+  positions?: Record<string, number>;
 }
 
 export interface BulkResult {
@@ -81,7 +85,11 @@ export async function bulkCardAction(
     try {
       switch (input.action) {
         case "move":
-          await cardService.updateCard(cardId, { columnId: input.columnId }, userId);
+          await cardService.updateCard(
+            cardId,
+            { columnId: input.columnId, position: input.positions?.[cardId] },
+            userId,
+          );
           break;
 
         case "assign":

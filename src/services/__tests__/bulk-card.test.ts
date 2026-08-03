@@ -44,6 +44,58 @@ describe("bulk-card.service", () => {
     expect(tasinmis.every((k) => k.columnId === done.id)).toBe(true);
   });
 
+  it("verilen pozisyonlar korunur - surukle-birak sirasi bozulmaz", async () => {
+    const { admin, org, project, todo, done } = await createWorkspace();
+    orgIds.push(org.id);
+    userIds.push(admin.id);
+
+    const a = await createCard(todo.id, admin.id, "A");
+    const b = await createCard(todo.id, admin.id, "B");
+    const c = await createCard(todo.id, admin.id, "C");
+
+    // Kullanici A,B,C sirasiyla birakti
+    await bulkCardService.bulkCardAction(
+      project.id,
+      {
+        cardIds: [a.id, b.id, c.id],
+        action: "move",
+        columnId: done.id,
+        positions: { [a.id]: 10, [b.id]: 20, [c.id]: 30 },
+      },
+      admin.id,
+    );
+
+    const sirali = await prisma.card.findMany({
+      where: { columnId: done.id },
+      orderBy: { position: "asc" },
+      select: { id: true, position: true },
+    });
+
+    expect(sirali.map((k) => k.id)).toEqual([a.id, b.id, c.id]);
+    expect(sirali.map((k) => k.position)).toEqual([10, 20, 30]);
+  });
+
+  it("pozisyon verilmezse kartlar sutunun sonuna eklenir", async () => {
+    const { admin, org, project, todo, done } = await createWorkspace();
+    orgIds.push(org.id);
+    userIds.push(admin.id);
+
+    const mevcut = await prisma.card.create({
+      data: { columnId: done.id, title: "Mevcut", creatorId: admin.id, position: 5 },
+    });
+    const yeni = await createCard(todo.id, admin.id);
+
+    await bulkCardService.bulkCardAction(
+      project.id,
+      { cardIds: [yeni.id], action: "move", columnId: done.id },
+      admin.id,
+    );
+
+    const tasinan = await prisma.card.findUnique({ where: { id: yeni.id } });
+    const mevcutKart = await prisma.card.findUnique({ where: { id: mevcut.id } });
+    expect(tasinan!.position).toBeGreaterThan(mevcutKart!.position);
+  });
+
   it("uye kart tasiyabilir", async () => {
     const { admin, member, org, project, todo, done } = await createWorkspace();
     orgIds.push(org.id);

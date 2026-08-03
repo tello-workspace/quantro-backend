@@ -16,6 +16,7 @@ const bulkSchema = z
     columnId: z.string().optional(),
     assigneeIds: z.array(z.string()).optional(),
     labelId: z.string().optional(),
+    positions: z.record(z.string(), z.number()).optional(),
   })
   .refine((d) => d.action !== "move" || !!d.columnId, {
     message: "Taşıma için hedef sütun gerekli",
