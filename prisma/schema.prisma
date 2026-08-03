@@ -351,13 +351,8 @@ model Project {
   changeRequests ChangeRequest[]
   automationRules AutomationRule[]
   cardTemplates   CardTemplate[]
-  sprints         Sprint[]
   customFields    CustomFieldDefinition[]
 }
-
-// Zaman kutulu iterasyon (Jira Sprint). Kartlar opsiyonel olarak bir sprint'e
-// baglanir - sprint'e hic kart baglanmadan da board normal Kanban gibi
-// calismaya devam eder, bu yuzden mevcut projelerde geriye donuk kirilma yok.
 
 // Proje bazli ek kart alani tanimi (Jira Custom Fields). Deger, tipi ne
 // olursa olsun String olarak saklanir; CHECKBOX icin "true"/"false", NUMBER
