@@ -204,7 +204,6 @@ export async function getSprintCards(sprintId: string, userId: string) {
     select: {
       id: true,
       title: true,
-      storyPoints: true,
       columnId: true,
       column: { select: { name: true, isDone: true } },
       assignees: { select: { user: { select: { id: true, name: true } } } },

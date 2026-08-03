@@ -78,7 +78,7 @@ export async function getProjectInsights(projectId: string, userId: string) {
     { user: { id: string; name: string; avatarUrl?: string | null }; weightedLoad: number; cardCount: number }
   >();
   for (const card of activeCards) {
-    const weight = card.storyPoints ?? PRIORITY_WEIGHT[card.priority];
+    const weight = PRIORITY_WEIGHT[card.priority];
     for (const assignee of card.assignees) {
       const entry = workloadMap.get(assignee.userId) ?? {
         user: assignee.user,

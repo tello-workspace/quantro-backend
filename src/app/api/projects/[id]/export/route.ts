@@ -13,7 +13,6 @@ type BoardTask = {
   columnId: string;
   position: number;
   priority: string;
-  storyPoints: number | null;
   lastActivityAt: string;
   assignees: { id: string; name: string }[];
   labels: { id: string; name: string; color: string }[];

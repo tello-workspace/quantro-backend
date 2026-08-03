@@ -14,7 +14,6 @@ export async function getMyAssignedCards(userId: string) {
       id: true,
       title: true,
       priority: true,
-      storyPoints: true,
       dueDate: true,
       lastActivityAt: true,
       columnId: true,
