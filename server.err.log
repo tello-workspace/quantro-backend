@@ -7,3 +7,25 @@
 
 (node:10796) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
 (Use `node --trace-deprecation ...` to show where the warning was created)
+[auth] API anahtari sorgusu başarısız: Error [PrismaClientKnownRequestError]: 
+Invalid `prisma.apiToken.findUnique()` invocation:
+
+
+Can't reach database server at `aws-0-eu-west-1.pooler.supabase.com:5432`
+
+Please make sure your database server is running at `aws-0-eu-west-1.pooler.supabase.com:5432`.
+    at async verifyApiToken (src\services\api-token.service.ts:111:17)
+    at async authenticate (src\middleware\auth.ts:60:15)
+    at async GET (src\app\api\organizations\route.ts:11:21)
+    at async Server.<anonymous> (server.ts:23:7)
+  109 |   if (!ham.startsWith(TOKEN_ONEKI)) return null;
+  110 |
+> 111 |   const kayit = await prisma.apiToken.findUnique({
+      |                 ^
+  112 |     where: { tokenHash: hashle(ham) },
+  113 |     select: {
+  114 |       id: true, {
+  code: 'P1001',
+  meta: [Object],
+  clientVersion: '6.19.3'
+}

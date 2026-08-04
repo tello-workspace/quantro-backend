@@ -6,3 +6,7 @@
  ○ Compiling /api/organizations ...
  ✓ Compiled /api/organizations in 651ms (647 modules)
  GET /api/organizations 200 in 2479ms
+ GET /api/organizations 503 in 144ms
+ ✓ Compiled /_not-found in 412ms (886 modules)
+ GET /api/health 404 in 599ms
+ GET /api/health 404 in 25ms
