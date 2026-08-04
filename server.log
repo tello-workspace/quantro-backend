@@ -5,3 +5,4 @@
  ✓ Compiled /middleware in 126ms (117 modules)
  ○ Compiling /api/organizations ...
  ✓ Compiled /api/organizations in 651ms (647 modules)
+ GET /api/organizations 200 in 2479ms
