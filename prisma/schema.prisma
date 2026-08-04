@@ -149,6 +149,7 @@ model User {
 
   passwordResetTokens      PasswordResetToken[]
   emailVerificationTokens  EmailVerificationToken[]
+  apiTokens                ApiToken[]
 
   ownedOrganizations      Organization[]           @relation("OrganizationOwner")
   organizationMemberships OrganizationMember[]
@@ -577,6 +578,36 @@ model EmailVerificationToken {
   expiresAt DateTime
   usedAt    DateTime?
   createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// Kullanici basina API anahtari - MCP server ve diger dis araclar bununla
+// kimlik dogruluyor. PasswordResetToken ile ayni desen: ham token DB'de
+// TUTULMAZ, yalnizca sha256 hash'i saklanir. Boylece veritabanini goren biri
+// (yedek, log, destek erisimi) kimsenin hesabina baglanamaz.
+//
+// JWT yerine ayri bir tur olmasinin sebebi: JWT kisa omurlu ve yenilenmesi
+// tarayici oturumuna bagli - bir MCP server'in arka planda haftalarca
+// calismasi gerekiyor. Bu token suresiz, ama kullanici istedigi an iptal
+// edebiliyor (JWT'de bu mumkun degil, suresi dolana kadar gecerli kalir).
+//
+// prefix: ham token'in ilk karakterleri, DUZ METIN. Kullanici arayuzde
+// "qtr_a1b2c3..." seklinde hangi anahtarin hangisi oldugunu ayirt edebilsin
+// diye - tek basina ise yaramaz, dogrulama her zaman hash uzerinden.
+model ApiToken {
+  id         String    @id @default(cuid())
+  userId     String
+  name       String
+  tokenHash  String    @unique
+  prefix     String
+  createdAt  DateTime  @default(now())
+  // Bilgi amacli: kullanici "bu anahtari hala bir yer kullaniyor mu"
+  // sorusunu cevaplayabilsin ve kullanilmayanlari guvenle silsin.
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 

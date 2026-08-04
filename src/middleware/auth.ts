@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { verifyToken } from "@/utils/jwt";
 import { prisma } from "@/lib/prisma";
 import { errorResponse } from "@/utils/api-response";
+import { TOKEN_ONEKI, verifyApiToken } from "@/services/api-token.service";
 
 export type AuthenticatedRequest = NextRequest & {
   user: { id: string; name: string; email: string };
@@ -48,6 +49,31 @@ export async function authenticate(request: NextRequest) {
   }
 
   const token = authHeader.slice(7);
+
+  // API anahtari mi JWT mi? On ek ile ayirt ediliyor - tahmin etmeye
+  // calismak yerine (JWT parse edip basarisiz olunca API token varsaymak)
+  // acik bir isaret kullaniyoruz, boylece hata mesajlari da dogru oluyor:
+  // gecersiz bir API anahtari "oturum suresi doldu" demez.
+  if (token.startsWith(TOKEN_ONEKI)) {
+    let sahip: Awaited<ReturnType<typeof verifyApiToken>>;
+    try {
+      sahip = await verifyApiToken(token);
+    } catch (error) {
+      console.error("[auth] API anahtari sorgusu başarısız:", error);
+      return errorResponse(
+        "Kimlik doğrulama şu anda yapılamıyor, lütfen tekrar deneyin",
+        503,
+        "AUTH_UNAVAILABLE",
+      );
+    }
+
+    if (!sahip) {
+      return errorResponse("API anahtarı geçersiz veya iptal edilmiş", 401, "INVALID_API_TOKEN");
+    }
+
+    (request as AuthenticatedRequest).user = sahip;
+    return;
+  }
 
   // JWT dogrulamasi (imza/sure) SADECE burada basarisiz olursa gercekten
   // "token gecersiz/suresi dolmus" demektir - 401 dogru.
