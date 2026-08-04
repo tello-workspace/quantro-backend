@@ -1,0 +1,7 @@
+ ✓ Compiled /instrumentation in 638ms (199 modules)
+[cron] Gece taraması zamanlandı (her gün 03:00)
+[SOCKET] Socket.io sunucusu baslatildi
+> Ready on http://localhost:3001
+ ✓ Compiled /middleware in 126ms (117 modules)
+ ○ Compiling /api/organizations ...
+ ✓ Compiled /api/organizations in 651ms (647 modules)
