@@ -136,15 +136,20 @@ function oncelikEtiketi(m: Metin, priority: string): string {
 
 // ------------------------------------------------------------------ renkler
 
-const BASLIK_DOLGU = "FF1E293B"; // slate-800
-const BANT_DOLGU = "FFF8FAFC"; // slate-50
+// Pano'daki görsel dile sadik kaliyoruz: koyu slate baslik, yeşil "bitti"
+// vurgusu, oncelik renkleri panelin kendi PRIORITY_BAR degerleriyle ayni.
+const BASLIK_DOLGU = "FF0F172A"; // slate-900 (pano koyu basligi)
+const BANT_DOLGU = "FFF8FAFC"; // slate-50 zebra
 const KENAR = "FFE2E8F0"; // slate-200
+const BITTI_DOLGU = "FFECFDF5"; // emerald-50 (pano done stripe ile ayni dil)
+const BITTI_YAZI = "FF047857"; // emerald-700
+const GECIKMIS_YAZI = "FFB91C1C"; // kirmizi
 
 const ONCELIK_RENGI: Record<string, { dolgu: string; yazi: string }> = {
-  URGENT: { dolgu: "FFFEE2E2", yazi: "FF991B1B" },
+  URGENT: { dolgu: "FFFEE2E2", yazi: "FFB91C1C" },
   HIGH: { dolgu: "FFFFEDD5", yazi: "FF9A3412" },
-  MEDIUM: { dolgu: "FFFEF9C3", yazi: "FF854D0E" },
-  LOW: { dolgu: "FFE0F2FE", yazi: "FF075985" },
+  MEDIUM: { dolgu: "FFE0F2FE", yazi: "FF1D4ED8" },
+  LOW: { dolgu: "FFF1F5F9", yazi: "FF475569" },
 };
 
 // Her cagrida YENI nesne donuyor: ExcelJS atanan stil nesnesini mutasyona
@@ -197,26 +202,26 @@ export async function boardToXlsx(
   });
 
   ws.columns = [
-    { header: m.kolon, key: "kolon", width: 18 },
-    { header: m.baslik, key: "baslik", width: 46 },
-    { header: m.oncelik, key: "oncelik", width: 11 },
-    { header: m.atananlar, key: "atananlar", width: 24 },
-    { header: m.etiketler, key: "etiketler", width: 22 },
-    { header: m.baslangic, key: "baslangic", width: 12 },
-    { header: m.bitis, key: "bitis", width: 12 },
-    { header: m.kontrolListesi, key: "kontrol", width: 13 },
-    { header: m.ilerleme, key: "ilerleme", width: 10 },
-    { header: m.sonHareket, key: "sonHareket", width: 17 },
-    { header: m.aciklama, key: "aciklama", width: 60 },
-    { header: m.kartId, key: "kartId", width: 26 },
+    { header: m.kolon, key: "kolon", width: 20 },
+    { header: m.baslik, key: "baslik", width: 50 },
+    { header: m.oncelik, key: "oncelik", width: 13 },
+    { header: m.atananlar, key: "atananlar", width: 26 },
+    { header: m.etiketler, key: "etiketler", width: 24 },
+    { header: m.baslangic, key: "baslangic", width: 13 },
+    { header: m.bitis, key: "bitis", width: 13 },
+    { header: m.kontrolListesi, key: "kontrol", width: 15 },
+    { header: m.ilerleme, key: "ilerleme", width: 12 },
+    { header: m.sonHareket, key: "sonHareket", width: 18 },
+    { header: m.aciklama, key: "aciklama", width: 55 },
+    { header: m.kartId, key: "kartId", width: 30 },
   ];
 
   const baslikSatiri = ws.getRow(1);
-  baslikSatiri.height = 22;
+  baslikSatiri.height = 26;
   baslikSatiri.eachCell((hucre) => {
     hucre.fill = { type: "pattern", pattern: "solid", fgColor: { argb: BASLIK_DOLGU } };
-    hucre.font = { bold: true, color: { argb: "FFFFFFFF" }, size: 11 };
-    hucre.alignment = { vertical: "middle", horizontal: "left" };
+    hucre.font = { bold: true, color: { argb: "FFFFFFFF" }, size: 12 };
+    hucre.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
     hucre.border = inceKenar();
   });
 
@@ -256,11 +261,40 @@ export async function boardToXlsx(
       });
     }
 
+    // Done kolonu: pano ile ayni dilde yesil vurgu. Kart "bitti"yi once
+    // gorulur kilmak hem satir takibini kolaylastirir hem de raporun
+    // "tamamlanan isler" bolumunu ayirt etmeyi saglar.
+    if (satir.kolonBitti) {
+      eklenen.getCell("baslik").fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: BITTI_DOLGU },
+      };
+      eklenen.getCell("baslik").font = {
+        color: { argb: BITTI_YAZI },
+        strike: g.checklistTotal > 0 && g.checklistDone === g.checklistTotal,
+      };
+      eklenen.getCell("kolon").font = { color: { argb: BITTI_YAZI } };
+    }
+
+    // Uzun metin sutunlarinda kucuk ama okunakli yazi + satir kaydirmaya
+    // acik birak (wrap). Aciklama/atananlar/etiketler uzayinca kesilmez.
+    for (const anahtar of ["baslik", "atananlar", "etiketler", "aciklama", "kolon"] as const) {
+      const hucre = eklenen.getCell(anahtar);
+      hucre.alignment = { vertical: "middle", wrapText: anahtar !== "kolon" };
+      hucre.font = { size: 10.5 };
+    }
+    eklenen.getCell("baslik").font = {
+      ...(eklenen.getCell("baslik").font as object),
+      bold: true,
+      size: 11,
+    };
+
     const oncelikHucresi = eklenen.getCell("oncelik");
     const renk = ONCELIK_RENGI[g.priority];
     if (renk) {
       oncelikHucresi.fill = { type: "pattern", pattern: "solid", fgColor: { argb: renk.dolgu } };
-      oncelikHucresi.font = { bold: true, color: { argb: renk.yazi } };
+      oncelikHucresi.font = { bold: true, color: { argb: renk.yazi }, size: 10.5 };
       oncelikHucresi.alignment = { vertical: "middle", horizontal: "center" };
     }
 
@@ -276,10 +310,15 @@ export async function boardToXlsx(
     eklenen.getCell("ilerleme").numFmt = "0%";
     eklenen.getCell("ilerleme").alignment = { vertical: "middle", horizontal: "center" };
     eklenen.getCell("kontrol").alignment = { vertical: "middle", horizontal: "center" };
+    eklenen.getCell("ilerleme").font = { size: 10.5 };
 
-    // Gecikmis is: bitis tarihi gecmis ve kolon "bitti" degil.
+    // Gecikmis is: bitis tarihi gecmis ve kolon "bitti" degil. Oncekinden
+    // farkli: gecikme sadece tarihi degil butun satiri hafif kirmizi yapar,
+    // boylece tarayicinin gozu en kritik satirlara takilir.
     if (bitis && bitis < bugun && !satir.kolonBitti) {
-      eklenen.getCell("bitis").font = { bold: true, color: { argb: "FFB91C1C" } };
+      const gecikmisHucre = eklenen.getCell("bitis");
+      gecikmisHucre.font = { bold: true, color: { argb: GECIKMIS_YAZI } };
+      gecikmisHucre.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF1F2" } };
     }
 
     eklenen.getCell("kartId").font = { size: 9, color: { argb: "FF94A3B8" } };
@@ -322,8 +361,11 @@ export async function boardToXlsx(
   const sayimTablosu = (girdiler: [string, number][]) => {
     for (const [ad, adet] of girdiler) {
       const r = ozet.addRow([ad, adet, toplam > 0 ? adet / toplam : 0]);
+      r.getCell(1).font = { size: 10.5 };
+      r.getCell(2).font = { size: 10.5 };
       r.getCell(2).alignment = { horizontal: "center" };
       r.getCell(3).numFmt = "0%";
+      r.getCell(3).font = { size: 10.5 };
       r.getCell(3).alignment = { horizontal: "center" };
       r.eachCell((hucre) => {
         hucre.border = inceKenar();
