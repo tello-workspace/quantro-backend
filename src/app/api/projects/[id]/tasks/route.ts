@@ -40,7 +40,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         description: card.description,
         dueDate: card.dueDate?.toISOString().split("T")[0],
         columnId: card.columnId,
-        assignees: card.assignees.map((a) => ({ id: a.user.id, name: a.user.name })),
+        assignees: card.assignees.map((a) => ({ id: a.user.id, name: a.user.name, avatarUrl: a.user.avatarUrl })),
       }, 201);
     } catch (err) {
       failIdempotency(idem.key);

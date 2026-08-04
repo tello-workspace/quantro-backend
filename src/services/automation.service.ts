@@ -188,7 +188,7 @@ async function executeAction(rule: AutomationRule, cardId: string) {
           dueDate: true,
           startDate: true,
           position: true,
-          assignees: { include: { user: { select: { id: true, name: true } } } },
+          assignees: { include: { user: { select: { id: true, name: true, avatarUrl: true } } } },
         },
       });
       if (!card) return;
@@ -203,7 +203,7 @@ async function executeAction(rule: AutomationRule, cardId: string) {
         description: card.description,
         columnId: card.columnId,
         projectId: rule.projectId,
-        assignees: card.assignees.map((a) => ({ id: a.user.id, name: a.user.name })),
+        assignees: card.assignees.map((a) => ({ id: a.user.id, name: a.user.name, avatarUrl: a.user.avatarUrl })),
         priority: card.priority,
         dueDate: card.dueDate?.toISOString() ?? null,
         startDate: card.startDate?.toISOString() ?? null,

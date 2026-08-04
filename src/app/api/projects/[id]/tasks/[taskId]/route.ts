@@ -22,7 +22,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       description: card.description,
       dueDate: card.dueDate?.toISOString().split("T")[0],
       columnId: card.columnId,
-      assignees: card.assignees.map((a) => ({ id: a.user.id, name: a.user.name })),
+      assignees: card.assignees.map((a) => ({ id: a.user.id, name: a.user.name, avatarUrl: a.user.avatarUrl })),
     });
   } catch (error) {
     if (error instanceof AppError) {
@@ -60,7 +60,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
       description: card.description,
       dueDate: card.dueDate?.toISOString().split("T")[0],
       columnId: card.columnId,
-      assignees: card.assignees.map((a) => ({ id: a.user.id, name: a.user.name })),
+      assignees: card.assignees.map((a) => ({ id: a.user.id, name: a.user.name, avatarUrl: a.user.avatarUrl })),
     });
   } catch (error) {
     if (error instanceof AppError) {

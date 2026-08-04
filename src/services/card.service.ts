@@ -427,7 +427,7 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
     broadcastToProject(projectId, SocketEvents.CARD_ASSIGNED, {
       cardId: updated.id,
       cardTitle: updated.title,
-      assignees: updated.assignees.map((a) => ({ id: a.user.id, name: a.user.name })),
+      assignees: updated.assignees.map((a) => ({ id: a.user.id, name: a.user.name, avatarUrl: a.user.avatarUrl })),
     });
 
     await logActivity({
@@ -449,7 +449,7 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
     description: updated.description,
     columnId: updated.columnId,
     projectId,
-    assignees: updated.assignees.map((a) => ({ id: a.user.id, name: a.user.name })),
+    assignees: updated.assignees.map((a) => ({ id: a.user.id, name: a.user.name, avatarUrl: a.user.avatarUrl })),
     priority: updated.priority,
     dueDate: updated.dueDate?.toISOString() ?? null,
     startDate: updated.startDate?.toISOString() ?? null,
