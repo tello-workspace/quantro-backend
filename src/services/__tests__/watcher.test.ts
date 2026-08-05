@@ -123,6 +123,44 @@ describe("watcher.service", () => {
     expect(kayit).not.toBeNull();
   });
 
+  // Gercek bir testte yakalandi: kullanici karti izlemeye alip organizasyondan
+  // ayrildi. CardWatcher karta ve kullaniciya bagli, UYELIGE degil - yani kayit
+  // duruyor. Uyelik filtresi olmadan ayrilan kisi kart basligini, proje adini,
+  // kolonunu ve KIMLERE ATANDIGINI gormeye devam ediyordu.
+  it("organizasyondan ayrilan kisi izlediklerinde o karti GOREMEZ", async () => {
+    const { admin, member, org, todo } = await createWorkspace();
+    orgIds.push(org.id);
+    userIds.push(admin.id, member.id);
+    const kart = await createCard(todo.id, admin.id);
+
+    await watcherService.watchCard(kart.id, member.id);
+    expect(await watcherService.getWatchedCards(member.id)).toHaveLength(1);
+
+    await prisma.organizationMember.deleteMany({
+      where: { organizationId: org.id, userId: member.id },
+    });
+
+    expect(await watcherService.getWatchedCards(member.id)).toHaveLength(0);
+  });
+
+  it("tekrar uye olunca izleme kaldigi yerden devam eder", async () => {
+    const { admin, member, org, todo } = await createWorkspace();
+    orgIds.push(org.id);
+    userIds.push(admin.id, member.id);
+    const kart = await createCard(todo.id, admin.id);
+
+    await watcherService.watchCard(kart.id, member.id);
+    await prisma.organizationMember.deleteMany({
+      where: { organizationId: org.id, userId: member.id },
+    });
+    await prisma.organizationMember.create({
+      data: { organizationId: org.id, userId: member.id, role: "MEMBER" },
+    });
+
+    // Abonelik silinmedi, sadece susturulmustu.
+    expect(await watcherService.getWatchedCards(member.id)).toHaveLength(1);
+  });
+
   // ------------------------------------------------------------- bildirimler
 
   it("yorum yapilinca izleyiciye bildirim gider", async () => {
@@ -151,6 +189,25 @@ describe("watcher.service", () => {
 
     const bildirimler = await prisma.notification.findMany({
       where: { userId: admin.id, type: "WATCHED_CARD_ACTIVITY" },
+    });
+    expect(bildirimler).toHaveLength(0);
+  });
+
+  it("organizasyondan ayrilan izleyiciye bildirim GITMEZ", async () => {
+    const { admin, member, org, todo } = await createWorkspace();
+    orgIds.push(org.id);
+    userIds.push(admin.id, member.id);
+    const kart = await createCard(todo.id, admin.id);
+
+    await watcherService.watchCard(kart.id, member.id);
+    await prisma.organizationMember.deleteMany({
+      where: { organizationId: org.id, userId: member.id },
+    });
+
+    await commentService.createComment(kart.id, { text: "bir yorum" }, admin.id);
+
+    const bildirimler = await prisma.notification.findMany({
+      where: { userId: member.id, type: "WATCHED_CARD_ACTIVITY", cardId: kart.id },
     });
     expect(bildirimler).toHaveLength(0);
   });

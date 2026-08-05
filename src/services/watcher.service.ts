@@ -117,10 +117,19 @@ export async function getWatchedCards(userId: string) {
   const watched = await prisma.cardWatcher.findMany({
     where: {
       userId,
-      // Arşivlenmiş kart "izlediklerim"de görünmemeli - kullanıcı için o iş
-      // bitmiş sayılır. İzleme kaydı silinmiyor: kart geri yüklenirse
-      // abonelik kaldığı yerden devam etsin.
-      card: { isArchived: false },
+      card: {
+        // Arşivlenmiş kart "izlediklerim"de görünmemeli - kullanıcı için o iş
+        // bitmiş sayılır. İzleme kaydı silinmiyor: kart geri yüklenirse
+        // abonelik kaldığı yerden devam etsin.
+        isArchived: false,
+        // ÜYELİK ŞART. İzleme kaydı organizasyondan ayrılınca silinmiyor
+        // (CardWatcher karta ve kullanıcıya bağlı, üyeliğe değil). Bu filtre
+        // olmadan organizasyondan çıkmış biri kart başlığını, proje adını,
+        // kolonunu ve KİMLERE ATANDIĞINI görmeye devam ediyordu.
+        // Filtre silme yerine tercih edildi: kişi tekrar üye olursa abonelik
+        // kaldığı yerden devam etsin (arşiv davranışıyla aynı mantık).
+        column: { project: { organization: { members: { some: { userId } } } } },
+      },
     },
     orderBy: { createdAt: "desc" },
     select: {
@@ -185,8 +194,25 @@ export async function getWatchedCards(userId: string) {
  * biri "sana atandı", diğeri "izlediğin kartta hareket var".
  */
 export async function notifyWatchers(cardId: string, excludeUserId: string, message: string) {
+  const kart = await prisma.card.findUnique({
+    where: { id: cardId },
+    select: { column: { select: { project: { select: { organizationId: true } } } } },
+  });
+  if (!kart) return;
+
   const watchers = await prisma.cardWatcher.findMany({
-    where: { cardId, userId: { not: excludeUserId } },
+    where: {
+      cardId,
+      userId: { not: excludeUserId },
+      // Organizasyondan ayrilan kisi bildirim ALMAMALI. Izleme kaydi uyelige
+      // bagli olmadigi icin ayrilinca silinmiyor; burada susturuluyor.
+      // Tekrar uye olursa bildirimler kendiliginden geri gelir.
+      user: {
+        organizationMemberships: {
+          some: { organizationId: kart.column.project.organizationId },
+        },
+      },
+    },
     select: { userId: true },
   });
 
