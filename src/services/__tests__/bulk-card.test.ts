@@ -3,9 +3,11 @@ import { createWorkspace, createCard, cleanup } from "@/test/fixtures";
 import { prisma } from "@/lib/prisma";
 import * as bulkCardService from "@/services/bulk-card.service";
 
-// Toplu islem tek kartlik servisleri donguyle cagiriyor; buradaki testlerin
-// asil isi yetkilerin dongude KAYBOLMADIGINI dogrulamak. Toplu bir uc nokta
-// yanlislikla yetki atlatma yolu haline gelirse en pahali hata bu olur.
+// Toplu islem artik yetkiyi BIR KEZ kontrol edip yazmalari kume bazli tek
+// sorguya indiriyor (tasima haric). Buradaki testlerin asil isi yetkilerin bu
+// sadelestirmede KAYBOLMADIGINI dogrulamak: uye atayamaz, uye silemez,
+// outsider hicbir seye dokunamaz, baska projenin karti sizamaz. Toplu bir uc
+// nokta yanlislikla yetki atlatma yolu haline gelirse en pahali hata bu olur.
 
 describe("bulk-card.service", () => {
   const orgIds: string[] = [];
@@ -211,6 +213,63 @@ describe("bulk-card.service", () => {
     expect(sonuc.basarisiz).toEqual([
       { cardId: "olmayan-kart-id", sebep: "Kart bu projede bulunamadı" },
     ]);
+  });
+
+  // Atama/etiket/arsiv/silme artik kart basina servis cagirmak yerine KUME
+  // BAZLI tek sorguyla yaziliyor. Bu testler kume yolunun iki sozunu koruyor:
+  // hicbir kart atlanmiyor ve sonuclar GIRIS SIRASINDA raporlaniyor - sira
+  // bozulursa kullaniciya "3. kart atlandi" gibi yanlis bir esleme gosterilir.
+  it("cok sayida kartta hicbiri atlanmaz", async () => {
+    const { admin, org, project, todo } = await createWorkspace();
+    orgIds.push(org.id);
+    userIds.push(admin.id);
+
+    // Tek kartlik akista bu 12 kart ~27 saniye suruyordu; kume bazli yolda
+    // sorgu sayisi kart sayisiyla dogru orantili buyumuyor.
+    const kartlar = [];
+    for (let i = 0; i < 12; i++) kartlar.push(await createCard(todo.id, admin.id));
+    const idler = kartlar.map((k) => k.id);
+
+    const sonuc = await bulkCardService.bulkCardAction(
+      project.id,
+      { cardIds: idler, action: "assign", assigneeIds: [admin.id] },
+      admin.id,
+    );
+
+    expect(sonuc.basarisiz).toHaveLength(0);
+    expect(sonuc.basarili).toEqual(idler); // sira korunuyor
+
+    const atamalar = await prisma.cardAssignee.findMany({
+      where: { cardId: { in: idler } },
+      select: { cardId: true },
+    });
+    expect(new Set(atamalar.map((a) => a.cardId)).size).toBe(12);
+  });
+
+  it("basarisizlar giris sirasindaki yerini korur", async () => {
+    const { admin, org, project, todo } = await createWorkspace();
+    orgIds.push(org.id);
+    userIds.push(admin.id);
+
+    const k1 = await createCard(todo.id, admin.id);
+    const k2 = await createCard(todo.id, admin.id);
+    const k3 = await createCard(todo.id, admin.id);
+
+    // Gecerli ve gecersiz id'ler ic ice: kume yolu gecerli/gecersiz ayrimini
+    // bastan yapiyor, sonuclari karistirirsa basarisiz listesi yanlis id'leri
+    // gosterirdi.
+    const sonuc = await bulkCardService.bulkCardAction(
+      project.id,
+      {
+        cardIds: [k1.id, "yok-1", k2.id, "yok-2", k3.id],
+        action: "assign",
+        assigneeIds: [admin.id],
+      },
+      admin.id,
+    );
+
+    expect(sonuc.basarili).toEqual([k1.id, k2.id, k3.id]);
+    expect(sonuc.basarisiz.map((b) => b.cardId)).toEqual(["yok-1", "yok-2"]);
   });
 
   it("ayni etiket iki kez eklenirse hata sayilmaz", async () => {
