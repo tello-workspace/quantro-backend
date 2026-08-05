@@ -1,4 +1,6 @@
+import { prisma } from "@/lib/prisma";
 import { AppError, ValidationError } from "@/utils/errors";
+import { invalidateUserCache } from "@/middleware/auth";
 
 // GitHub profil senkronu. Kullanicinin kendi beyanina (elle yazdigi uzmanlik
 // alanlari) guvenmek yerine gercek repo verisinden turetiyoruz - yetkinlik
@@ -161,4 +163,110 @@ export async function fetchGithubProfile(githubUrl: string): Promise<GithubProfi
 
   onbellek.set(username.toLowerCase(), { veri: ozet, zaman: Date.now() });
   return ozet;
+}
+
+/** Senkronun neyi yazdigini, neye dokunmadigini cagirana anlatir. */
+export interface GithubSenkronSonucu {
+  profil: GithubProfileOzeti;
+  /** Kaydedilen alan adlari - kullaniciya "ne oldu" diyebilmek icin. */
+  yazilan: string[];
+  /** Dolu oldugu icin korunan alanlar. */
+  korunan: string[];
+}
+
+/**
+ * GitHub profilini ceker ve KAYDEDER.
+ *
+ * Onceden bu islem yalnizca okuyup formu dolduruyordu ve gelen 8 alanin
+ * yalnizca 2'si (bio, languages) forma giriyordu; kalan 6'si atiliyordu.
+ * Kullanici "Kaydet"e basmadigi surece de hicbir sey kalici olmuyordu.
+ *
+ * Yazma politikasi alanin SAHIBINE gore degisiyor:
+ *
+ * - GitHub'a ait olgular (kullanici adi, sirket, konum, repo sayisi) her
+ *   senkronda uzerine yaziliyor. Bunlarin kullanici girdisi karsiligi yok,
+ *   dolayisiyla ezilecek bir sey de yok.
+ * - Kullanicinin kendi yazdigi alanlar (bio, avatar) yalnizca BOSSA
+ *   dolduruluyor. Elle yazilmis bir bio'yu GitHub'daki tek satirlik metinle
+ *   degistirmek bilgi kaybi olurdu.
+ * - Diller birlestiriliyor: GitHub yalnizca repo dillerini biliyor; kullanici
+ *   SQL/Docker gibi repo dili olarak gorunmeyen seyler eklemis olabilir.
+ * - Isim hic ellenmiyor: zorunlu alan ve kullanicinin kendi secimi.
+ */
+export interface MevcutProfil {
+  bio: string | null;
+  avatarUrl: string | null;
+  languages: string[];
+}
+
+/**
+ * Yazma politikasini uygular. AG ERISIMI YOK ve veritabanina dokunmuyor -
+ * saf bir fonksiyon, bu yuzden dogrudan test edilebiliyor. Politikanin dogru
+ * olmasi bu ozelligin en kritik parcasi: hatasi sessizce veri kaybi demek.
+ */
+export function senkronVerisiHazirla(profil: GithubProfileOzeti, mevcut: MevcutProfil) {
+  const yazilan: string[] = [];
+  const korunan: string[] = [];
+
+  const veri: Record<string, unknown> = {
+    githubUrl: `https://github.com/${profil.username}`,
+    githubUsername: profil.username,
+    company: profil.company,
+    location: profil.location,
+    publicRepos: profil.publicRepos,
+    githubSyncedAt: new Date(),
+  };
+  yazilan.push("GitHub kullanıcı adı");
+  if (profil.company) yazilan.push("şirket");
+  if (profil.location) yazilan.push("konum");
+  yazilan.push("repo sayısı");
+
+  if (profil.bio) {
+    if (mevcut.bio?.trim()) korunan.push("biyografi");
+    else {
+      veri.bio = profil.bio;
+      yazilan.push("biyografi");
+    }
+  }
+
+  if (profil.avatarUrl) {
+    if (mevcut.avatarUrl) korunan.push("profil fotoğrafı");
+    else {
+      veri.avatarUrl = profil.avatarUrl;
+      yazilan.push("profil fotoğrafı");
+    }
+  }
+
+  if (profil.languages.length > 0) {
+    const birlesik = [...new Set([...mevcut.languages, ...profil.languages])].slice(0, 20);
+    if (birlesik.length !== mevcut.languages.length) {
+      veri.languages = birlesik;
+      yazilan.push(`${birlesik.length - mevcut.languages.length} yeni dil`);
+    }
+  }
+
+  return { veri, yazilan, korunan };
+}
+
+export async function syncGithubProfileToUser(
+  userId: string,
+  githubUrl: string,
+): Promise<GithubSenkronSonucu> {
+  const profil = await fetchGithubProfile(githubUrl);
+
+  const mevcut = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { bio: true, avatarUrl: true, languages: true },
+  });
+  if (!mevcut) throw new AppError(404, "Kullanıcı bulunamadı", "NOT_FOUND");
+
+  const { veri, yazilan, korunan } = senkronVerisiHazirla(profil, mevcut);
+
+  await prisma.user.update({ where: { id: userId }, data: veri });
+
+  // auth middleware kullaniciyi 30 saniye onbellekliyor; isim/e-posta
+  // degismedi ama tutarli olmak icin dusuruyoruz.
+  invalidateUserCache(userId);
+
+  return { profil, yazilan, korunan };
 }

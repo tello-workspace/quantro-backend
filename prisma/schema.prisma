@@ -134,6 +134,17 @@ model User {
   experience      String? // serbest metin: "2 yıl 3 ay", "6 ay", "Yeni başladım" vb.
   githubUrl       String?
   linkedinUrl     String?
+
+  // GitHub senkronundan gelen alanlar. Kullanicinin ELLE doldurdugu alanlardan
+  // AYRI tutuluyorlar: bunlar GitHub'a ait olgular, karsiliklarinda kullanici
+  // girdisi yok, bu yuzden her senkronda guvenle uzerine yazilabiliyorlar.
+  // Ayni veriyi title/bio gibi ortak alanlara sikistirsaydik senkron ya
+  // kullanicinin yazdigini ezerdi ya da veriyi atmak zorunda kalirdi.
+  githubUsername  String?
+  company         String?
+  location        String?
+  publicRepos     Int?
+  githubSyncedAt  DateTime?
   expertiseAreas  String[] @default([])
   languages       String[] @default([])
   // Supabase Storage'daki genel (public) "avatars" bucket'ina yuklenmis

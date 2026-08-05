@@ -238,6 +238,13 @@ const PROFILE_SELECT = {
   experience: true,
   githubUrl: true,
   linkedinUrl: true,
+  // GitHub senkronunun yazdigi alanlar. Burada secilmezlerse veritabanina
+  // kaydedilseler bile arayuze hic ulasmazlar.
+  githubUsername: true,
+  company: true,
+  location: true,
+  publicRepos: true,
+  githubSyncedAt: true,
   expertiseAreas: true,
   languages: true,
   language: true,
