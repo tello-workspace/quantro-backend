@@ -52,9 +52,11 @@ enum NotificationType {
   REQUEST_REJECTED // talebin reddedildi
   MENTIONED // bir yorumda @isim ile etiketlendin
   AUTOMATION // bir otomasyon kurali seni bilgilendirdi
-  // WATCHED_CARD_ACTIVITY kart izleme ozelligiyle birlikte kaldirildi. Enum
-  // degeri veritabaninda birakildi: Postgres'te enum degeri silmek tipi
-  // bastan yaratmayi gerektiriyor ve kullanilmayan bir deger zarar vermiyor.
+  WATCHED_CARD_ACTIVITY // izledigin bir kartta yorum/tasima oldu
+  // NOT: Bu deger bir kez kaldirilip (c9aef48) geri eklendi. Eski surumdeki
+  // "enum degeri veritabaninda birakildi" notu artik gecersiz - 04a2f4c
+  // (20260804095500) enum'u USING ile yeniden yaratarak degeri gercekten
+  // dusurdu. Yani bu migration degeri SIFIRDAN ekliyor.
 }
 
 enum AutomationTrigger {
@@ -180,6 +182,7 @@ model User {
   uploadedAttachments     CardAttachment[]
   createdAutomationRules  AutomationRule[]
   createdCardTemplates    CardTemplate[]
+  watchedCards            CardWatcher[]
 }
 
 // ---------- ORGANIZATION ----------
@@ -446,6 +449,7 @@ model Card {
   checklistItems    ChecklistItem[]
   subtasks          Card[]                 @relation("CardParent")
   customFieldValues CardCustomFieldValue[]
+  watchers          CardWatcher[]
 
   @@index([columnId])
   @@index([lastActivityAt]) // cron taraması hızlı olsun
@@ -461,6 +465,26 @@ model CardAssignee {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@id([cardId, userId])
+}
+
+// Atanmamis ama karttaki gelismelerden (yorum, tasima) haberdar olmak isteyen
+// kisiler. CardAssignee ile ayni desen ama SORUMLULUK anlami tasimaz - sadece
+// bildirim aboneligi. Ayrimin onemi: eskiden bir isi takip etmek isteyenin tek
+// yolu kendini karta atamakti, bu da "kim yapiyor" bilgisini bozuyordu.
+//
+// [userId, cardId] indeksi "izlediklerim" listesi icin: sorgu kullanicidan
+// baslar, bilesik birincil anahtar ise cardId ile basliyor ve o yonde ise
+// yaramaz.
+model CardWatcher {
+  cardId    String
+  userId    String
+  createdAt DateTime @default(now())
+
+  card Card @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([cardId, userId])
+  @@index([userId, cardId])
 }
 
 model Comment {

@@ -3,6 +3,7 @@ import { NotFoundError, ForbiddenError } from "@/utils/errors";
 import { logActivity } from "@/services/activity.service";
 import { broadcastToProject, SocketEvents } from "@/server/socket";
 import * as notificationService from "@/services/notification.service";
+import { notifyWatchers, autoWatch } from "@/services/watcher.service";
 import type { CreateCommentInput, UpdateCommentInput } from "@/schemas/comment.schema";
 
 // Kartın kolonuna → projesine → organizasyonuna erişim kontrolü
@@ -111,6 +112,13 @@ export async function createComment(cardId: string, input: CreateCommentInput, u
       cardId,
     });
   }
+
+  await notifyWatchers(cardId, userId, `${comment.author.name} izlediğin "${cardTitle}" kartına yorum yaptı`);
+
+  // Yorum yazan kişi otomatik izleyici olur (Jira davranışı): bir karta yorum
+  // yazdıysan cevabını görmek istersin. Kendi yorumundan bildirim almaz -
+  // notifyWatchers yazarı zaten dışlıyor.
+  await autoWatch(cardId, userId);
 
   return comment;
 }

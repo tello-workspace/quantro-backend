@@ -12,7 +12,7 @@ const MAX_CARDS = 100;
 const bulkSchema = z
   .object({
     cardIds: z.array(z.string()).min(1, "En az bir kart seçilmeli").max(MAX_CARDS),
-    action: z.enum(["move", "assign", "label", "archive", "delete"]),
+    action: z.enum(["move", "assign", "label", "archive", "delete", "watch", "unwatch"]),
     columnId: z.string().optional(),
     assigneeIds: z.array(z.string()).optional(),
     labelId: z.string().optional(),

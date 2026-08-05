@@ -56,7 +56,7 @@ async function projeYetkisi(projectId: string, userId: string) {
   return { role: uye.role, organizationId: proje.organizationId };
 }
 
-export type BulkAction = "move" | "assign" | "label" | "archive" | "delete";
+export type BulkAction = "move" | "assign" | "label" | "archive" | "delete" | "watch" | "unwatch";
 
 export interface BulkInput {
   cardIds: string[];
@@ -176,6 +176,12 @@ export async function bulkCardAction(
 
     case "label":
       return await topluEtiketle(projectId, gecerli, input.labelId!, sonuc);
+
+    // Izleme KENDI aboneligin - baskasinin verisine dokunmuyor, o yuzden
+    // ADMIN sarti yok, uyelik yeterli (yukarida projeYetkisi ile dogrulandi).
+    case "watch":
+    case "unwatch":
+      return await topluIzle(gecerli, userId, input.action === "watch", sonuc);
   }
 
   return sonuc;
@@ -364,6 +370,33 @@ async function topluEtiketle(
 
   for (const cardId of cardIds) {
     broadcastToProject(projectId, SocketEvents.CARD_UPDATED, { id: cardId, projectId });
+  }
+
+  sonuc.basarili.push(...cardIds);
+  return sonuc;
+}
+
+/**
+ * Toplu izleme / izlemeyi birakma.
+ *
+ * Socket YAYINI YOK ve bu bilerek: izleme kisisel bir abonelik, kartin
+ * kendisi degismiyor. CARD_UPDATED yayinlamak diger kullanicilarin panolarini
+ * hicbir sey degismemisken tazelerdi.
+ */
+async function topluIzle(
+  cardIds: string[],
+  userId: string,
+  izle: boolean,
+  sonuc: BulkResult,
+): Promise<BulkResult> {
+  if (izle) {
+    // skipDuplicates: zaten izlenen kart hata degil, istenen son durum saglanmis.
+    await prisma.cardWatcher.createMany({
+      data: cardIds.map((cardId) => ({ cardId, userId })),
+      skipDuplicates: true,
+    });
+  } else {
+    await prisma.cardWatcher.deleteMany({ where: { userId, cardId: { in: cardIds } } });
   }
 
   sonuc.basarili.push(...cardIds);
