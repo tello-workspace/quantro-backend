@@ -11,9 +11,12 @@ interface LogErrorParams {
   method: string;
   path: string;
   userId?: string;
+  // Hatanin olustugu organizasyon. Org bazli izolasyon icin: bir org'un
+  // admini yalnizca kendi org'una ait kayitlari gorebilsin (bkz. error-log.service).
+  organizationId?: string;
 }
 
-export async function logError({ error, method, path, userId }: LogErrorParams) {
+export async function logError({ error, method, path, userId, organizationId }: LogErrorParams) {
   const message = error instanceof Error ? error.message : String(error);
   const stack = error instanceof Error ? (error.stack ?? null) : null;
 
@@ -24,13 +27,14 @@ export async function logError({ error, method, path, userId }: LogErrorParams) 
       method,
       path,
       userId: userId ?? null,
+      organizationId: organizationId ?? null,
       message,
     }),
   );
 
   try {
     await prisma.errorLog.create({
-      data: { message, stack, method, path, userId },
+      data: { message, stack, method, path, userId, organizationId },
     });
   } catch (dbError) {
     console.error("[LOGGER] Hata veritabanina yazilamadi:", dbError);

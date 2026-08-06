@@ -20,7 +20,6 @@ const EXTENSION_BY_MIME: Record<string, string> = {
   "image/png": "png",
   "image/jpeg": "jpg",
   "image/gif": "gif",
-  "image/svg+xml": "svg",
   "application/pdf": "pdf",
   "text/plain": "txt",
   "text/csv": "csv",

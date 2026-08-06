@@ -660,6 +660,11 @@ model ErrorLog {
   path       String
   statusCode Int      @default(500)
   userId     String?
+  // Hatanin hangi organizasyon baglaminda olustugu. Global admin yok;
+  // adminler yalnizca kendi org'larinin hata kayitlarini gorebilsin diye
+  // eklendi (org bazli izolasyon). HandleApiError, istek kimlik dogrulamasi
+  // gecmisse ve org baglami biliniyorsa doldurur.
+  organizationId String?
   createdAt  DateTime @default(now())
 
   @@index([createdAt])

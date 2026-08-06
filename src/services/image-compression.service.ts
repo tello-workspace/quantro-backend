@@ -46,7 +46,7 @@ export async function compressImage(
     return resizeOnlyIfOversize(buffer);
   }
 
-  // GIF/SVG/non-image: dokunma
+  // GIF/non-image: dokunma (SVG artik allowlist'te degil)
   return null;
 }
 

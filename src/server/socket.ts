@@ -562,7 +562,10 @@ export function initializeSocket(httpServer: HttpServer): SocketIOServer<ServerS
   // Authentication middleware
   io.use(async (socket: AuthenticatedSocket, next) => {
     try {
-      const token = socket.handshake.auth.token || socket.handshake.query.token;
+      // Yalnizca handshake.auth.token kabul edilir. query.token kaldirildi:
+      // token'i URL'e koymak proxy/log/analiz servislerine düz metin olarak
+      // sizdirirdi (güvenlik bulgusu 3).
+      const token = socket.handshake.auth.token;
 
       if (!token) return next(new Error("Authentication required"));
 
@@ -636,14 +639,14 @@ export function initializeSocket(httpServer: HttpServer): SocketIOServer<ServerS
       email: socket.userEmail,
     });
 
-    // Broadcast user online status
-    broadcastUserOnline(socket.userId!);
+    // Broadcast user online status — yalnizca kullanicinin org odalarina
+    broadcastUserOnline(socket.userId!, socket);
 
     // Handle disconnect
     socket.on("disconnect", (reason) => {
       console.log(`Socket disconnected: ${socket.userName} (${socket.userId}) - ${reason}`);
       clearPresence(socket.id, socket.userId!);
-      broadcastUserOffline(socket.userId!);
+      broadcastUserOffline(socket.userId!, socket);
     });
 
     // VSCode extension: kullanici bir dosyayi kaydetti / aktif editoru degisti.
@@ -846,14 +849,24 @@ export function broadcastToCard(cardId: string, event: SocketEventName, data: un
 }
 
 
-function broadcastUserOnline(userId: string) {
+// Online/offline durumu TUM bagli istemcilere degil, yalnizca o kullanicinin
+// uyesi oldugu organizasyon odalarina yayinlanir. Global emit, hic tanimadigi
+// org'daki kullanicilarin anlik durumunu herkese sizdiriyordu (güvenlik bulgusu 12).
+// Kullanici duz metin bir userId oldugu icin bu islevin kendisi zaten odalara
+// kirilmis bir yayin olmali; org uyeligi baglanti aninda DB'den dogrulaniyor
+// ve socket.organizations listesi bu esnada dolu oluyor.
+function broadcastUserOnline(userId: string, socket: AuthenticatedSocket) {
   const ioServer = getIO();
   if (!ioServer) return;
-  ioServer.emit(SocketEvents.USER_ONLINE, userId);
+  for (const orgId of socket.organizations ?? []) {
+    ioServer.to(`org:${orgId}`).emit(SocketEvents.USER_ONLINE, userId);
+  }
 }
 
-function broadcastUserOffline(userId: string) {
+function broadcastUserOffline(userId: string, socket: AuthenticatedSocket) {
   const ioServer = getIO();
   if (!ioServer) return;
-  ioServer.emit(SocketEvents.USER_OFFLINE, userId);
+  for (const orgId of socket.organizations ?? []) {
+    ioServer.to(`org:${orgId}`).emit(SocketEvents.USER_OFFLINE, userId);
+  }
 }

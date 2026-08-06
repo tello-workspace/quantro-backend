@@ -21,7 +21,14 @@ setInterval(() => {
 
 function getClientIp(request: NextRequest): string {
   const forwarded = request.headers.get("x-forwarded-for");
-  if (forwarded) return forwarded.split(",")[0].trim();
+  if (forwarded) {
+    // XFF, proxy zinciri boyunca her vekilin ekledigi IP listesidir. Ilk
+    // eleman istemcinin KENDI kontrolunde (sahtelenebilir), son eleman ise
+    // en uzaktaki guvenilir vekilin ekledigi gercek kaynak adresidir. Rate
+    // limit baypas icin istegin ilk elemanini degil son elemanini baz al.
+    const parts = forwarded.split(",").map((p) => p.trim()).filter(Boolean);
+    if (parts.length > 0) return parts[parts.length - 1];
+  }
   return request.headers.get("x-real-ip") ?? "unknown";
 }
 

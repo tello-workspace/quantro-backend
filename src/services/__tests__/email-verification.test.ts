@@ -4,7 +4,7 @@ import { resolveMx } from "dns/promises";
 import { prisma } from "@/lib/prisma";
 import { createUser, cleanup, uniq } from "@/test/fixtures";
 import * as authService from "@/services/auth.service";
-import { ConflictError, UnauthorizedError } from "@/utils/errors";
+import { UnauthorizedError } from "@/utils/errors";
 
 // DNS coz.mlemesi bu ortamda (sandbox/CI/kapali ag) belirsiz sekilde
 // yavas/asilan olabiliyor - gercek ag'a bagimli olmayan, deterministik bir
@@ -58,13 +58,12 @@ describe("auth.service - email dogrulama", () => {
     expect(result.token).toBeTruthy();
   });
 
-  it("var olan email ile tekrar kayidi reddeder", async () => {
+  it("var olan email ile tekrar kayit: hata yerine ayni (basarili) yanit - hesap numaralandirmasi yok", async () => {
     const user = await createUser();
     userIds.push(user.id);
 
-    await expect(
-      authService.register({ name: "Baska Isim", password: "test1234", email: user.email }),
-    ).rejects.toThrow(ConflictError);
+    const result = await authService.register({ name: "Baska Isim", password: "test1234", email: user.email });
+    expect(result).toEqual({ verificationRequired: false, email: user.email });
   });
 
   it("MX kaydi olmayan bir domain'e kaydi reddeder", async () => {
