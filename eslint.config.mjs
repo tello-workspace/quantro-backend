@@ -11,6 +11,11 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
     "src/generated/**",
+    // Yardimci script'ler ve manuel test dosyalari: CommonJS require()
+    // kullanirlar (ESLint TS kurali aksini soyler). Next/React kodu
+    // degiller, lint disinda tutmak dogru - kod tabaninin kendisi temiz.
+    "scripts/**",
+    "test_*.js",
   ]),
   {
     rules: {
