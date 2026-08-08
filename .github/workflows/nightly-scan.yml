@@ -20,5 +20,7 @@ jobs:
     steps:
       - name: /api/scan tetikle
         run: |
-          curl -fsS -X POST "https://tello-backend.onrender.com/api/scan" \
+          # 8 Agu 2026: eski tello-backend Render servisi askiya alindi, bu
+          # tarama o gunden beri sessizce calismiyordu. Yeni adres asagida.
+          curl -fsS -X POST "https://quantro-backend-1.onrender.com/api/scan" \
             -H "x-cron-secret: ${{ secrets.CRON_SECRET }}"

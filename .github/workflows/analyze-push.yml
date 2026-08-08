@@ -29,7 +29,9 @@ jobs:
       - name: Commit bilgisini topla ve gonder
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
-          API_URL: https://tello-backend.onrender.com
+          # 8 Agu 2026: eski tello-backend servisi askiya alindi (HTTP 503),
+          # is quantro-backend-1'e tasindi.
+          API_URL: https://quantro-backend-1.onrender.com
         run: |
           set -u
 
