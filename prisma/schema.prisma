@@ -183,6 +183,7 @@ model User {
   createdAutomationRules  AutomationRule[]
   createdCardTemplates    CardTemplate[]
   watchedCards            CardWatcher[]
+  uploadedProjectDocuments ProjectDocument[]
 }
 
 // ---------- ORGANIZATION ----------
@@ -367,6 +368,7 @@ model Project {
   automationRules AutomationRule[]
   cardTemplates   CardTemplate[]
   customFields    CustomFieldDefinition[]
+  documents       ProjectDocument[]
 }
 
 // Proje bazli ek kart alani tanimi (Jira Custom Fields). Deger, tipi ne
@@ -555,6 +557,28 @@ model CardAttachment {
   uploader User @relation(fields: [uploaderId], references: [id])
 
   @@index([cardId])
+}
+
+// Projeye ilişkin referans belgeleri (şartname, PRD, sözleşme vb.). CardAttachment
+// ile ayni depolama deseni (Supabase Storage), farki: Card'a degil Project'e bagli
+// ve MCP server'in metin icerigini okuyabilmesi icin extractedText sakliyor -
+// her okuma isteginde docx/pdf'i yeniden parse etmemek icin yukleme aninda
+// bir kez cikarilip veritabaninda tutuluyor.
+model ProjectDocument {
+  id            String   @id @default(cuid())
+  projectId     String
+  uploaderId    String
+  fileName      String
+  storagePath   String
+  fileSize      Int
+  mimeType      String
+  extractedText String?  @db.Text
+  createdAt     DateTime @default(now())
+
+  project  Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  uploader User    @relation(fields: [uploaderId], references: [id])
+
+  @@index([projectId])
 }
 
 // Kart icindeki alt gorev listesi (Trello'daki "Checklist"). Sirali (position,

@@ -60,3 +60,6 @@ export const ATTACHMENTS_BUCKET = "card-attachments";
 // herkese acik gosterilecegi icin imzali URL uretmeye gerek yok, dogrudan
 // getPublicUrl() kullanilir.
 export const AVATARS_BUCKET = "avatars";
+// Projeye baglanan referans belgeleri (sartname, PRD vb.) — card-attachments
+// gibi private, indirme signed URL uzerinden yapilir.
+export const PROJECT_DOCUMENTS_BUCKET = "project-documents";
