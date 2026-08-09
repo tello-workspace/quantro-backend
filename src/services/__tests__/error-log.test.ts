@@ -19,8 +19,15 @@ describe("error-log.service", () => {
     orgIds.push(org.id);
     userIds.push(admin.id, member.id, outsider.id);
 
+    // Kayit org'a atfedilir - yeni kapsam geregi admin yalnizca kendi org'unun
+    // kayitlarini gorebilir.
     const log = await prisma.errorLog.create({
-      data: { message: "test hatasi", method: "GET", path: "/api/test" },
+      data: {
+        message: "test hatasi",
+        method: "GET",
+        path: "/api/test",
+        organizationId: org.id,
+      },
     });
 
     try {

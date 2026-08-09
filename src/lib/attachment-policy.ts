@@ -12,7 +12,8 @@ export const ALLOWED_MIME_TYPES: ReadonlySet<string> = new Set([
   "image/jpeg",
   "image/gif",
   "image/webp",
-  "image/svg+xml",
+  // image/svg+xml bilerek YOK: SVG script tasiyabilir ve tarayicida inline
+  // render edilirse XSS riski olusturur (güvenlik bulgusu 10).
   "application/pdf",
   "text/plain",
   "text/csv",
@@ -32,9 +33,8 @@ export const COMPRESSIBLE_IMAGE_TYPES: ReadonlySet<string> = new Set([
 // Zaten sikistirilmis gorseller: boyut limitini asiyorsa sadece boyutlandirilir
 export const RESIZE_ONLY_IMAGE_TYPES: ReadonlySet<string> = new Set(["image/webp"]);
 
-// Dokunulmadan gecen gorseller: GIF animasyonlu olabilir (sharp kare atar),
-// SVG vektordur (rasterize etmek kalite kaybettirir)
+// Dokunulmadan gecen gorseller: GIF animasyonlu olabilir (sharp kare atar).
+// SVG artik allowlist'te olmadigi icin burada da yok (bkz. ALLOWED_MIME_TYPES).
 export const PASSTHROUGH_IMAGE_TYPES: ReadonlySet<string> = new Set([
   "image/gif",
-  "image/svg+xml",
 ]);

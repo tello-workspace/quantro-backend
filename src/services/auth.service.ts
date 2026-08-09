@@ -2,7 +2,7 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
 import { signToken } from "@/utils/jwt";
-import { AppError, ConflictError, UnauthorizedError, ValidationError } from "@/utils/errors";
+import { AppError, UnauthorizedError, ValidationError } from "@/utils/errors";
 import { sendPasswordResetEmail, sendVerificationEmail, hasValidMxRecord } from "@/utils/email";
 import { encryptSecret } from "@/utils/crypto";
 import type {
@@ -58,15 +58,21 @@ export type RegisterResult = {
 };
 
 export async function register(input: RegisterInput): Promise<RegisterResult> {
-  const existing = await prisma.user.findUnique({ where: { email: input.email } });
-
-  if (existing) {
-    throw new ConflictError("Bu email adresi zaten kayıtlı");
-  }
-
   const domainValid = await hasValidMxRecord(input.email);
   if (!domainValid) {
     throw new ValidationError("Bu email adresine ulaşılamıyor, geçerli bir email adresi girin");
+  }
+
+  const existing = await prisma.user.findUnique({ where: { email: input.email } });
+
+  // Hesap numaralandırmasını önle: email zaten kayıtlıysa hata döndürmek,
+  // o adresin sistemde var olduğunu ifşa ederdi. Bunun yerine aynı (başarılı)
+  // yanıtı döndürüyoruz. Süre farkını kapatmak için bcrypt adımı da çalıştırılır
+  // (yeni kayıtta da aynı iş yapılır) — aksi halde "hızlı cevap = email var"
+  // zamanlama sızıntısı olurdu.
+  if (existing) {
+    await bcrypt.hash(input.password, SALT_ROUNDS); // süre tutarlılığı
+    return { verificationRequired: false, email: input.email };
   }
 
   const passwordHash = await bcrypt.hash(input.password, SALT_ROUNDS);

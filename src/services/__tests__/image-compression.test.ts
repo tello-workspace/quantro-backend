@@ -61,7 +61,7 @@ describe("image-compression.service", () => {
     expect(result!.mimeType).toBe("image/webp");
   });
 
-  it("GIF ve SVG'e dokunmaz (null)", async () => {
+  it("GIF'e dokunmaz, SVG (allowlist disinda) null doner", async () => {
     const gif = Buffer.from("GIF89a fake content");
     expect(await compressImage(gif, "image/gif")).toBeNull();
 

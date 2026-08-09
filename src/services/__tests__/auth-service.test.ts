@@ -3,11 +3,11 @@ import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { uniq } from "@/test/fixtures";
 import * as authService from "@/services/auth.service";
-import { ConflictError, UnauthorizedError } from "@/utils/errors";
+import { UnauthorizedError } from "@/utils/errors";
 
 // Auth service birim testleri (gercek DB baglantisi, Supabase gerekmez):
-// - register: yeni email -> kullanici olusur, ayni email -> ConflictError,
-//   gecersiz MX domain -> ValidationError
+// - register: yeni email -> kullanici olusur, ayni email -> ayni (basarili)
+//   yanit (numaralandirma onleme), gecersiz MX domain -> ValidationError
 // - login: dogru sifre -> token, yanlis sifre/email -> UnauthorizedError,
 //   dogrulanmamis -> 403 EMAIL_NOT_VERIFIED
 //
@@ -38,13 +38,14 @@ describe("auth.service", () => {
     if (user) userIds.push(user.id);
   });
 
-  it("register: ayni email iki kez -> ConflictError", async () => {
+  it("register: ayni email iki kez -> hesap numaralandirmasi olmadan ayni (basarili) yanit", async () => {
     const email = `${uniq("user")}@gmail.com`;
     await authService.register({ name: "Test", email, password: "12345678" });
 
-    await expect(
-      authService.register({ name: "Test2", email, password: "87654321" }),
-    ).rejects.toThrow(ConflictError);
+    // Email zaten kayitliysa hata YOK, ayni basarili yanit doner - boylece
+    // disaridan "bu email sistemde var mi" sorusu cevaplanamaz.
+    const result = await authService.register({ name: "Test2", email, password: "87654321" });
+    expect(result).toMatchObject({ verificationRequired: false, email });
   });
 
   it("login: dogru sifre ile token doner", async () => {

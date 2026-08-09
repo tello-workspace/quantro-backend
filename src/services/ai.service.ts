@@ -716,11 +716,16 @@ async function callGeminiOnce(
     body.tools = toGeminiFunctionDeclarations(tools);
   }
 
-  const url = `${provider.baseUrl}/models/${provider.model}:generateContent?key=${provider.apiKey}`;
+  // API anahtari URL'e degil x-goog-api-key header'ina konur. URL'deki anahtar
+  // proxy/TLS-terminasyon loglarinda ve referer benzeri izlerde duz metin kalirdi.
+  const url = `${provider.baseUrl}/models/${provider.model}:generateContent`;
 
   const response = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": provider.apiKey,
+    },
     body: JSON.stringify(body),
     signal,
   });
@@ -1477,7 +1482,9 @@ Format:
       const cleaned = trimmedReply.replace(/```json\s*|```/g, "").trim();
       parsed = JSON.parse(cleaned);
     } catch (err) {
-      console.error("[AI FILL] JSON parse error. Raw reply was:", rawReply);
+      // Ham yanit loglanmaz: prompt-enjeksiyonu ile modelden sizdirilan veri
+      // bu sekilde loglarda duz metin kalmamali. Sadece durum bilgisi yazilir.
+      console.error("[AI FILL] JSON parse of AI yanıtı başarısız:", err);
     }
   }
 
@@ -1526,9 +1533,10 @@ Format:
 
 
 export async function analyzePushAndMoveCards(userId: string, commitMessage: string, diff: string) {
+  // Commit mesaji ve diff icerigi loglara YAZILMAZ - kod, sifre, URL gibi
+  // hassas bilgiler tasiyabilir ve loglarda duz metin kalmamalidir.
   console.log(`[AI PUSH ANALYZER] Analiz başladı. User ID: ${userId}`);
-  console.log(`[AI PUSH ANALYZER] Commit Mesajı: "${commitMessage}"`);
-  console.log(`[AI PUSH ANALYZER] Git Diff Uzunluğu: ${diff ? diff.length : 0} karakter`);
+  console.log(`[AI PUSH ANALYZER] Diff boyutu: ${diff ? diff.length : 0} karakter`);
 
   // 1. Fetch user's cards (bitmis/isDone sutunlardaki kartlar aday disi
   // birakiliyor: zaten kapanmis bir isi push analizine gore yeniden
@@ -1556,10 +1564,7 @@ export async function analyzePushAndMoveCards(userId: string, commitMessage: str
     }
   });
 
-  console.log(`[AI PUSH ANALYZER] Kullanıcıya atanan kart sayısı: ${userCards.length}`);
-  userCards.forEach(c => {
-    console.log(`  -> Kart ID: ${c.id} | Başlık: "${c.title}" | Sütun: "${c.column.name}" | Proje: "${c.column.project.name}"`);
-  });
+  console.log(`[AI PUSH ANALYZER] Kullanıcıya atanan aktif kart sayısı: ${userCards.length}`);
 
   if (userCards.length === 0) {
     console.log(`[AI PUSH ANALYZER] Kullanıcının atalı olduğu aktif kart yok, çıkılıyor.`);
@@ -1663,8 +1668,8 @@ Format:
     clearTimeout(timeout);
   }
 
-  console.log(`[AI PUSH ANALYZER] AI Ham Cevap: "${responseText}"`);
-
+  // Ham AI yaniti loglanmaz - prompt-enjeksiyonu durumunda modelin disari
+  // sizdirdigi veri (org uye email'i gibi) bu sekilde loglara da yazilmaz.
   if (!responseText) {
     console.log(`[AI PUSH ANALYZER] AI'dan yanıt gelmedi, çıkılıyor.`);
     return { movedCards: [] };
@@ -1724,8 +1729,6 @@ Format:
       }
     }
   }
-
-  console.log(`[AI PUSH ANALYZER] Ayrıştırılan Kararlar:`, decisions);
 
   if (!Array.isArray(decisions)) {
     console.log(`[AI PUSH ANALYZER] Kararlar bir array değil, çıkılıyor.`);

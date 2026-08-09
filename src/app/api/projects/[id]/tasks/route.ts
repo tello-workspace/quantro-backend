@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
-import { createCardSchema, updateCardSchema } from "@/schemas/card.schema";
+import { z } from "zod";
+import { createCardSchema } from "@/schemas/card.schema";
 import * as cardService from "@/services/card.service";
 import { successResponse, errorResponse, handleApiError } from "@/utils/api-response";
 import { validateBody } from "@/middleware/validate";
@@ -7,30 +8,37 @@ import { authenticate, AuthenticatedRequest } from "@/middleware/auth";
 import { checkIdempotency, clearIdempotency, failIdempotency } from "@/middleware/idempotency";
 import { AppError } from "@/utils/errors";
 
+// tasks ucu columnId'yi body'den alir (columns/[id]/cards'ta path'ten gelir).
+// createCardSchema'yi extend edip columnId'yi zorunlu yapar; geri kalan
+// alan tipleri (priority, assigneeIds, dueDate...) ayni sekilde dogrulanir.
+const createTaskSchema = createCardSchema.extend({
+  columnId: z.string().min(1, "columnId zorunludur"),
+});
+
 // POST /api/projects/{id}/tasks — sadece title + columnId alır, kart oluşturur
+// (columns/[id]/cards ile aynı schema tabanı: tip/uzunluk tutarlılığı)
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const authError = await authenticate(request);
   if (authError) return authError;
 
   try {
     const user = (request as AuthenticatedRequest).user;
-    const body = await request.json();
-    const { columnId, title, description, priority, assigneeIds, dueDate } = body;
-    if (!columnId || !title) {
-      return errorResponse("columnId ve title zorunludur", 400, "VALIDATION_ERROR");
-    }
+    const bodyResult = await validateBody(request, createTaskSchema);
+    if (bodyResult instanceof Response) return bodyResult;
+
+    const { columnId, title, description, priority, assigneeIds, dueDate } = bodyResult;
 
     // Idempotency check
-    const idem = checkIdempotency(request, user.id, body);
+    const idem = checkIdempotency(request, user.id, bodyResult);
     if (idem instanceof Response) return idem;
 
     try {
       const card = await cardService.createCard(columnId, {
         title,
-        description: description || undefined,
-        priority: priority || "MEDIUM",
-        assigneeIds: Array.isArray(assigneeIds) ? assigneeIds : undefined,
-        dueDate: dueDate || undefined,
+        description: description ?? undefined,
+        priority: priority ?? "MEDIUM",
+        assigneeIds,
+        dueDate: dueDate ?? undefined,
       }, user.id);
 
       clearIdempotency(idem.key);
