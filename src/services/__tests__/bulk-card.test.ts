@@ -83,7 +83,7 @@ describe("bulk-card.service", () => {
     userIds.push(admin.id);
 
     const mevcut = await prisma.card.create({
-      data: { columnId: done.id, title: "Mevcut", creatorId: admin.id, position: 5 },
+      data: { columnId: done.id, number: 903, title: "Mevcut", creatorId: admin.id, position: 5 },
     });
     const yeni = await createCard(todo.id, admin.id);
 

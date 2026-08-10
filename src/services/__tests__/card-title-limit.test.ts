@@ -80,7 +80,7 @@ describe("kart baslik siniri", () => {
 
     // Servisi atlayarak dogrudan yaziyoruz - eski verinin birebir taklidi
     const bozuk = await prisma.card.create({
-      data: { columnId: todo.id, title: UZUN, creatorId: admin.id, position: 1 },
+      data: { columnId: todo.id, number: 1, title: UZUN, creatorId: admin.id, position: 1 },
     });
 
     const guncel = await cardService.updateCard(

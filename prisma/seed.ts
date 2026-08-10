@@ -78,6 +78,11 @@ async function main() {
     data: {
       name: "E-Ticaret Yenileme",
       description: "Mağaza altyapısının modernizasyonu",
+      // Kart anahtari oneki: kartlar ETY-1, ETY-2... olarak gorunur.
+      // cardCounter asagida acilan 9 kartla ayni sayida ilerletiliyor ki
+      // seed'den sonra acilan ilk kart ETY-10 olsun.
+      key: "ETY",
+      cardCounter: 9,
       organizationId: org.id,
       ownerId: admin.id,
     },
@@ -95,6 +100,7 @@ async function main() {
   const card1 = await prisma.card.create({
     data: {
       columnId: todo.id,
+      number: 1,
       title: "Ödeme sağlayıcı entegrasyonu",
       description: "Stripe ile ödeme akışının bağlanması",
       creatorId: admin.id,
@@ -110,6 +116,7 @@ async function main() {
   await prisma.card.create({
     data: {
       columnId: todo.id,
+      number: 2,
       title: "Mobil uyum testleri",
       creatorId: admin.id,
       priority: Priority.LOW,
@@ -124,6 +131,7 @@ async function main() {
   const card3 = await prisma.card.create({
     data: {
       columnId: inProgress.id,
+      number: 3,
       title: "Sepet sayfası yeniden tasarımı",
       creatorId: admin.id,
       priority: Priority.HIGH,
@@ -139,6 +147,7 @@ async function main() {
   await prisma.card.create({
     data: {
       columnId: inProgress.id,
+      number: 4,
       title: "Ürün arama performansı",
       creatorId: admin.id,
       priority: Priority.URGENT,
@@ -154,6 +163,7 @@ async function main() {
   const card5 = await prisma.card.create({
     data: {
       columnId: inProgress.id,
+      number: 5,
       title: "Checkout hata ayıklama",
       description: "Ödeme sonrası sipariş oluşturulmuyor",
       creatorId: admin.id,
@@ -171,6 +181,7 @@ async function main() {
   await prisma.card.create({
     data: {
       columnId: inProgress.id,
+      number: 6,
       title: "Envanter senkronizasyonu",
       creatorId: admin.id,
       priority: Priority.HIGH,
@@ -186,6 +197,7 @@ async function main() {
   const card7 = await prisma.card.create({
     data: {
       columnId: review.id,
+      number: 7,
       title: "Ödeme akışı QA",
       creatorId: admin.id,
       priority: Priority.MEDIUM,
@@ -206,6 +218,7 @@ async function main() {
   const card8 = await prisma.card.create({
     data: {
       columnId: done.id,
+      number: 8,
       title: "Login sayfası tasarımı",
       creatorId: admin.id,
       priority: Priority.MEDIUM,
@@ -220,6 +233,7 @@ async function main() {
   const card9 = await prisma.card.create({
     data: {
       columnId: done.id,
+      number: 9,
       title: "Header/Footer bileşenleri",
       creatorId: admin.id,
       priority: Priority.LOW,

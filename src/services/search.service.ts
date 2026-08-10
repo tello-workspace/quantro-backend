@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { ForbiddenError } from "@/utils/errors";
+import { findCardByKey, formatCardKey, parseCardKey } from "@/services/card-key.service";
 
 interface SearchRow {
   id: string;
@@ -11,6 +12,8 @@ interface SearchRow {
   columnName: string;
   projectId: string;
   projectName: string;
+  /** İnsan-okunur anahtar: "QNT-42" */
+  cardKey: string;
 }
 
 // Organizasyon panolari buyudukce (cok proje/kart) tek bir panonun
@@ -32,6 +35,32 @@ export async function searchOrganization(organizationId: string, userId: string,
   const trimmed = query.trim();
   if (!trimmed) return { cards: [] };
 
+  // "QNT-42" yazıldıysa bu bir arama değil, bir ADRES: tam eşleşen kart
+  // varsa tek sonuç olarak dönüyoruz. Metin araması aynı sorguda 0 sonuç
+  // verirdi (başlıkta "QNT-42" geçmiyor), oysa kullanıcının kastettiği şey
+  // net. Kart bulunamazsa normal metin aramasına düşülüyor.
+  const anahtar = parseCardKey(trimmed);
+  if (anahtar) {
+    const kart = await findCardByKey(organizationId, trimmed);
+    if (kart) {
+      return {
+        cards: [
+          {
+            id: kart.id,
+            title: kart.title,
+            description: kart.description,
+            priority: kart.priority as string,
+            columnId: kart.column.id,
+            columnName: kart.column.name,
+            projectId: kart.column.project.id,
+            projectName: kart.column.project.name,
+            cardKey: formatCardKey(kart.column.project.key, kart.number),
+          },
+        ],
+      };
+    }
+  }
+
   const pattern = `%${trimmed}%`;
 
   const rows = await prisma.$queryRaw<SearchRow[]>(Prisma.sql`
@@ -43,7 +72,8 @@ export async function searchOrganization(organizationId: string, userId: string,
       col.id AS "columnId",
       col.name AS "columnName",
       p.id AS "projectId",
-      p.name AS "projectName"
+      p.name AS "projectName",
+      p."key" || '-' || c."number" AS "cardKey"
     FROM "Card" c
     JOIN "Column" col ON col.id = c."columnId"
     JOIN "Project" p ON p.id = col."projectId"

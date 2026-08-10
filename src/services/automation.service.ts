@@ -3,6 +3,7 @@ import { NotFoundError, ForbiddenError } from "@/utils/errors";
 import * as notificationService from "@/services/notification.service";
 import { logActivity } from "@/services/activity.service";
 import { broadcastToProject, SocketEvents } from "@/server/socket";
+import { allocateCardNumber } from "@/services/card-key.service";
 import type { AutomationRule, AutomationTrigger } from "@prisma/client";
 import type { CreateAutomationRuleInput, UpdateAutomationRuleInput } from "@/schemas/automation.schema";
 
@@ -255,9 +256,14 @@ async function executeCreateCardAction(rule: AutomationRule) {
   });
   const position = (lastCard?.position ?? 0) + 1;
 
+  // Otomasyonun açtığı kart da anahtar alır: "kural açtı" olması onu
+  // referans verilemez bir kart yapmamalı.
+  const number = await allocateCardNumber(rule.projectId);
+
   const card = await prisma.card.create({
     data: {
       columnId: rule.actionColumnId,
+      number,
       title: rule.actionMessage ?? rule.name,
       creatorId: rule.createdById,
       position,

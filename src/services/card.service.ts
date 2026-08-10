@@ -5,6 +5,7 @@ import { notifyBlockerResolved } from "@/services/dependency.service";
 import { logActivity } from "@/services/activity.service";
 import * as automationService from "@/services/automation.service";
 import { notifyWatchers } from "@/services/watcher.service";
+import { allocateCardNumber } from "@/services/card-key.service";
 import { broadcastToProject, SocketEvents } from "@/server/socket";
 import type { CreateCardInput, UpdateCardInput } from "@/schemas/card.schema";
 import type { Priority } from "@prisma/client";
@@ -147,9 +148,15 @@ export async function createCard(columnId: string, input: CreateCardInput, userI
   // sinir bu yuzden burada uygulaniyor.
   const { title, description } = normalizeTitle(input);
 
+  // Kart numarası (QNT-42'nin 42'si). Kart yaratmadan HEMEN önce alınıyor;
+  // araya bir hata girerse o numara boşa gider (dizide delik olur) ama iki
+  // kart asla aynı numarayı almaz - Jira'nın davranışı da bu.
+  const number = await allocateCardNumber(projectId);
+
   const card = await prisma.card.create({
     data: {
       columnId,
+      number,
       title,
       description,
       creatorId: userId,
@@ -232,7 +239,11 @@ export async function getCardById(cardId: string, userId: string) {
     where: { id: cardId },
     include: {
       ...assigneeInclude,
-      column: { select: { id: true, name: true, projectId: true } },
+      // project.key kart detayında "QNT-42" rozetini çizmek için geliyor:
+      // kartın kendi numarası tek başına anlamsız, önek projede duruyor.
+      column: {
+        select: { id: true, name: true, projectId: true, project: { select: { key: true } } },
+      },
       comments: {
         orderBy: { createdAt: "desc" },
         include: { author: { select: { id: true, name: true, email: true, avatarUrl: true } } },

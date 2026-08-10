@@ -38,10 +38,13 @@ async function imzaliKapakUrlleri(yollar: string[]): Promise<Map<string, string>
 async function checkProjectAccess(projectId: string, userId: string) {
   const project = await prisma.project.findFirst({
     where: { id: projectId, organization: { members: { some: { userId } } } },
-    select: { organization: { select: { members: { where: { userId }, select: { role: true } } } } },
+    select: {
+      key: true,
+      organization: { select: { members: { where: { userId }, select: { role: true } } } },
+    },
   });
 
-  if (project) return { role: project.organization.members[0].role };
+  if (project) return { role: project.organization.members[0].role, projectKey: project.key };
 
   const exists = await prisma.project.findUnique({
     where: { id: projectId },
@@ -114,6 +117,9 @@ export async function getBoard(projectId: string, userId: string) {
       taskIds.push(card.id);
       tasks[card.id] = {
         id: card.id,
+        // Görünen anahtar istemcide projectKey ile birleştiriliyor (QNT-42);
+        // her kartta öneki tekrarlamak yükü boşuna büyütürdü.
+        number: card.number,
         title: card.title,
         description: card.description,
         dueDate: card.dueDate?.toISOString().split("T")[0],
@@ -144,5 +150,5 @@ export async function getBoard(projectId: string, userId: string) {
     };
   }
 
-  return { columns: boardColumns, tasks, myRole: access.role };
+  return { columns: boardColumns, tasks, myRole: access.role, projectKey: access.projectKey };
 }

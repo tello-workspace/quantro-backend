@@ -1,5 +1,6 @@
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
+import { allocateCardNumber } from "@/services/card-key.service";
 
 // Testler paylasilan uzak DB'ye baglandigi icin her kayit benzersiz bir
 // eke sahip olur; boylece paralel/tekrarli kosumlar birbirini bozmaz ve
@@ -41,8 +42,11 @@ export async function createWorkspace() {
     },
   });
 
+  // Kart anahtari oneki (QNT-42'nin QNT'si). Testler ayni org'da tek proje
+  // kullaniyor; benzersizlik org bazinda oldugu icin sabit "TST" yeterli.
+  // Ikinci bir proje acan testler kendi anahtarini vermeli.
   const project = await prisma.project.create({
-    data: { name: uniq("project"), organizationId: org.id, ownerId: admin.id },
+    data: { name: uniq("project"), key: "TST", organizationId: org.id, ownerId: admin.id },
   });
 
   const todo = await prisma.column.create({
@@ -56,8 +60,18 @@ export async function createWorkspace() {
 }
 
 export async function createCard(columnId: string, creatorId: string, title = "Test Card") {
+  // Kart numarasi servis katmaninda Project.cardCounter'dan aliniyor; bu
+  // fixture servisi atlayip dogrudan yazdigi icin sayaci burada da
+  // ilerletiyoruz - aksi halde ayni projede iki fixture karti ayni numarayi
+  // alir ve "QNT-1" iki karti gosterirdi.
+  const column = await prisma.column.findUniqueOrThrow({
+    where: { id: columnId },
+    select: { projectId: true },
+  });
+  const number = await allocateCardNumber(column.projectId);
+
   return prisma.card.create({
-    data: { columnId, title, creatorId, position: 1 },
+    data: { columnId, number, title, creatorId, position: 1 },
   });
 }
 

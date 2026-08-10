@@ -359,16 +359,28 @@ model Project {
   ownerId        String
   createdAt      DateTime @default(now())
 
+  // İNSAN-OKUNUR KART ANAHTARI (Jira'daki PROJ-123 karşılığı)
+  // key: 2-5 karakterlik proje öneki ("QNT"), organizasyon içinde benzersiz.
+  // cardCounter: bu projede verilmiş SON kart numarası. Yeni kart açılırken
+  // atomik olarak +1'lenip okunur (Postgres'te UPDATE ... RETURNING atomiktir),
+  // böylece eşzamanlı iki kart aynı numarayı almaz. Silinen numara geri
+  // kullanılmaz - anahtar kalıcı bir referans, geri dönüştürülemez.
+  key            String
+  cardCounter    Int      @default(0)
+
   organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   owner          User            @relation("ProjectOwner", fields: [ownerId], references: [id])
   columns        Column[]
   labels         Label[]
   activities     Activity[]
+  // organizasyon içinde tek: "QNT-42" bir org'da tek bir kartı gösterir
   changeRequests ChangeRequest[]
   automationRules AutomationRule[]
   cardTemplates   CardTemplate[]
   customFields    CustomFieldDefinition[]
   documents       ProjectDocument[]
+
+  @@unique([organizationId, key])
 }
 
 // Proje bazli ek kart alani tanimi (Jira Custom Fields). Deger, tipi ne
@@ -416,6 +428,12 @@ model Column {
 model Card {
   id             String    @id @default(cuid())
   columnId       String
+  // Proje içinde artan sıra numarası. Görünen anahtar: <project.key>-<number>
+  // ("QNT-42"). Numara Project.cardCounter'dan atomik olarak alınır
+  // (card-key.service.ts). Kartın projesi Column üzerinden bulunuyor, bu
+  // yüzden veritabanı seviyesinde (projectId, number) tekilliği kurulamıyor;
+  // tekilliği sayaç garanti ediyor.
+  number         Int
   title          String
   description    String?
   creatorId      String
@@ -456,6 +474,7 @@ model Card {
   @@index([columnId])
   @@index([lastActivityAt]) // cron taraması hızlı olsun
   @@index([parentCardId])
+  @@index([number]) // "QNT-42" araması: proje kolonlarına join edip numaraya bakıyoruz
 }
 
 // Coklu atama: bir kart birden fazla kisiye atanabilir (CardLabel ile ayni desen)

@@ -68,7 +68,7 @@ describe("automation.service motoru", () => {
 
     // MEDIUM oncelikli kart -> tasinmamali
     const card = await prisma.card.create({
-      data: { columnId: todo.id, title: "Normal kart", creatorId: admin.id, position: 1, priority: "MEDIUM" },
+      data: { columnId: todo.id, number: 901, title: "Normal kart", creatorId: admin.id, position: 1, priority: "MEDIUM" },
     });
     await automationService.runRulesForTrigger({ projectId, trigger: "CARD_CREATED", cardId: card.id, columnId: todo.id });
 
@@ -95,7 +95,7 @@ describe("automation.service motoru", () => {
     );
 
     const card = await prisma.card.create({
-      data: { columnId: todo.id, title: "Acil kart", creatorId: admin.id, position: 1, priority: "URGENT" },
+      data: { columnId: todo.id, number: 902, title: "Acil kart", creatorId: admin.id, position: 1, priority: "URGENT" },
     });
     await automationService.runRulesForTrigger({ projectId, trigger: "CARD_CREATED", cardId: card.id, columnId: todo.id });
 

@@ -10,7 +10,7 @@ describe("organizasyon geneli arama", () => {
   beforeAll(async () => {
     ws = await createWorkspace();
     const secondProject = await prisma.project.create({
-      data: { name: "Ikinci Proje", organizationId: ws.org.id, ownerId: ws.admin.id },
+      data: { name: "Ikinci Proje", key: "IKI", organizationId: ws.org.id, ownerId: ws.admin.id },
     });
     secondProjectId = secondProject.id;
     const secondColumn = await prisma.column.create({

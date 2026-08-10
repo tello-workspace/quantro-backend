@@ -2,6 +2,11 @@ import { prisma } from "@/lib/prisma";
 import { NotFoundError, ForbiddenError } from "@/utils/errors";
 import * as notificationService from "@/services/notification.service";
 import { broadcastToOrganization, SocketEvents } from "@/server/socket";
+import {
+  findAvailableProjectKey,
+  normalizeProjectKey,
+  suggestProjectKey,
+} from "@/services/card-key.service";
 import type { CreateProjectInput, UpdateProjectInput } from "@/schemas/project.schema";
 
 // Organization üyeliğini kontrol et
@@ -22,10 +27,20 @@ export async function createProject(organizationId: string, input: CreateProject
     );
   }
 
+  // Kart anahtarı öneki: kullanıcı verdiyse doğrula, vermediyse addan üret.
+  // Her iki durumda da org içinde boş olan ilk anahtara düşülüyor - anahtar
+  // çakışması yüzünden proje oluşturmayı reddetmek kullanıcıya hiçbir şey
+  // kazandırmaz, "QNT doluydu, QNT2 verdim" demek yeterli.
+  const istenenKey = input.key
+    ? normalizeProjectKey(input.key)
+    : suggestProjectKey(input.name);
+  const key = await findAvailableProjectKey(organizationId, istenenKey);
+
   const project = await prisma.project.create({
     data: {
       name: input.name,
       description: input.description,
+      key,
       organizationId,
       ownerId: userId,
       columns: {
