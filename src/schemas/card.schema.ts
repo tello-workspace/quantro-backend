@@ -32,5 +32,20 @@ export const updateCardSchema = z.object({
   parentCardId: z.string().nullable().optional(),
 });
 
+export const duplicateCardSchema = z.object({
+  targetColumnId: z.string().optional(),
+  includeLabels: z.boolean().optional(),
+  includeAssignees: z.boolean().optional(),
+  includeChecklist: z.boolean().optional(),
+  includeAttachments: z.boolean().optional(),
+  includeCustomFields: z.boolean().optional(),
+});
+
+export const moveCardToProjectSchema = z.object({
+  targetColumnId: z.string().min(1, "Hedef kolon zorunludur"),
+});
+
 export type CreateCardInput = z.infer<typeof createCardSchema>;
 export type UpdateCardInput = z.infer<typeof updateCardSchema>;
+export type DuplicateCardInput = z.infer<typeof duplicateCardSchema>;
+export type MoveCardToProjectInput = z.infer<typeof moveCardToProjectSchema>;

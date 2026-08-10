@@ -34,7 +34,12 @@ async function checkColumnAccess(columnId: string, userId: string) {
   });
   if (!member) throw new ForbiddenError("Bu projeye erişim yetkiniz yok");
 
-  return { role: member.role, projectId: column.projectId, columnName: column.name };
+  return {
+    role: member.role,
+    projectId: column.projectId,
+    columnName: column.name,
+    organizationId: column.project.organizationId,
+  };
 }
 
 // Fraksiyonel pozisyon hesapla
@@ -323,6 +328,19 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
   if (isColumnChange && input.columnId) {
     const destAccess = await checkColumnAccess(input.columnId, userId);
     newColumnName = destAccess.columnName;
+
+    // Bu genel PATCH ucu her zaman AYNI proje icinde tasima icin tasarlandi
+    // (otomasyon, AI, toplu islem, degisiklik talebi hep bunu cagiriyor).
+    // Baska bir projeye tasima etiket/ozel alan gibi proje-bazli verinin ne
+    // olacagina karar vermek gerektiriyor - bu yuzden ayri, bilinçli bir
+    // uctan (moveCardToProject) yapilmasi sart; burada sessizce izin verilirse
+    // otomasyon kurallari gibi beklenmeyen cagiranlar veriyi fark etmeden
+    // bozabilir.
+    if (destAccess.projectId !== projectId) {
+      throw new ValidationError(
+        "Kart başka bir projeye bu uçtan taşınamaz - moveCardToProject kullanın",
+      );
+    }
   }
 
   const hasFieldEdits =
@@ -476,6 +494,245 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
   });
 
   return updated;
+}
+
+export interface DuplicateCardOptions {
+  targetColumnId?: string;
+  includeLabels?: boolean;
+  includeAssignees?: boolean;
+  includeChecklist?: boolean;
+  includeAttachments?: boolean;
+  includeCustomFields?: boolean;
+}
+
+// Karti kopyalar - ayni kolona ya da (istege bagli) baska bir projenin
+// kolonuna. Etiket ve ozel alanlar proje-bazli oldugu icin hedef BASKA
+// projeyse bunlar ID ile eslesmez: etiket isim eslesirse hedefteki karsiligina
+// baglanir, eslesmezse ve ozel alan degerleri HER ZAMAN sessizce
+// dusurulur - cagiran taraf droppedLabels/droppedCustomFields ile kullaniciya
+// haber vermeli.
+export async function duplicateCard(cardId: string, userId: string, options: DuplicateCardOptions = {}) {
+  const card = await prisma.card.findUnique({
+    where: { id: cardId },
+    include: {
+      assignees: true,
+      labels: { include: { label: true } },
+      checklistItems: true,
+      attachments: true,
+      customFieldValues: { include: { field: true } },
+    },
+  });
+  if (!card) throw new NotFoundError("Kart");
+
+  const { role, projectId: sourceProjectId, organizationId: sourceOrgId } = await checkColumnAccess(
+    card.columnId,
+    userId,
+  );
+  if (role !== "ADMIN") {
+    throw new ForbiddenError("Sadece adminler kart kopyalayabilir");
+  }
+
+  const targetColumnId = options.targetColumnId ?? card.columnId;
+  const destAccess = await checkColumnAccess(targetColumnId, userId);
+  if (destAccess.organizationId !== sourceOrgId) {
+    throw new ForbiddenError("Kart farklı bir organizasyona kopyalanamaz");
+  }
+  const isCrossProject = destAccess.projectId !== sourceProjectId;
+
+  const droppedLabels: string[] = [];
+  let labelIdsToAttach: string[] = [];
+  if (options.includeLabels !== false && card.labels.length > 0) {
+    if (!isCrossProject) {
+      labelIdsToAttach = card.labels.map((cl) => cl.labelId);
+    } else {
+      const targetLabels = await prisma.label.findMany({ where: { projectId: destAccess.projectId } });
+      for (const cl of card.labels) {
+        const match = targetLabels.find((l) => l.name.toLowerCase() === cl.label.name.toLowerCase());
+        if (match) labelIdsToAttach.push(match.id);
+        else droppedLabels.push(cl.label.name);
+      }
+    }
+  }
+
+  const droppedCustomFields: string[] = [];
+  let customFieldValuesToAttach: { fieldId: string; value: string | null }[] = [];
+  if (options.includeCustomFields !== false && card.customFieldValues.length > 0) {
+    if (!isCrossProject) {
+      customFieldValuesToAttach = card.customFieldValues.map((v) => ({ fieldId: v.fieldId, value: v.value }));
+    } else {
+      droppedCustomFields.push(...card.customFieldValues.map((v) => v.field.name));
+    }
+  }
+
+  const assigneeIdsToAttach =
+    options.includeAssignees !== false ? card.assignees.map((a) => a.userId) : [];
+
+  const number = await allocateCardNumber(destAccess.projectId);
+  const lastCard = await prisma.card.findFirst({
+    where: { columnId: targetColumnId },
+    orderBy: { position: "desc" },
+    select: { position: true },
+  });
+  const position = (lastCard?.position ?? 0) + 1;
+
+  const newCard = await prisma.card.create({
+    data: {
+      columnId: targetColumnId,
+      number,
+      title: `${card.title} (kopya)`,
+      description: card.description,
+      creatorId: userId,
+      priority: card.priority,
+      dueDate: card.dueDate,
+      startDate: card.startDate,
+      position,
+      assignees: { create: assigneeIdsToAttach.map((id) => ({ userId: id })) },
+      labels: { create: labelIdsToAttach.map((labelId) => ({ labelId })) },
+      customFieldValues:
+        customFieldValuesToAttach.length > 0 ? { create: customFieldValuesToAttach } : undefined,
+      checklistItems:
+        options.includeChecklist !== false && card.checklistItems.length > 0
+          ? {
+              create: card.checklistItems.map((item) => ({
+                text: item.text,
+                done: item.done,
+                position: item.position,
+              })),
+            }
+          : undefined,
+      attachments:
+        options.includeAttachments !== false && card.attachments.length > 0
+          ? {
+              create: card.attachments.map((att) => ({
+                uploaderId: userId,
+                fileName: att.fileName,
+                storagePath: att.storagePath,
+                fileSize: att.fileSize,
+                mimeType: att.mimeType,
+              })),
+            }
+          : undefined,
+    },
+    include: assigneeInclude,
+  });
+
+  broadcastToProject(destAccess.projectId, SocketEvents.CARD_CREATED, {
+    id: newCard.id,
+    title: newCard.title,
+    description: newCard.description,
+    columnId: newCard.columnId,
+    projectId: destAccess.projectId,
+    assignees: newCard.assignees.map((a) => ({ id: a.user.id, name: a.user.name, avatarUrl: a.user.avatarUrl })),
+    priority: newCard.priority,
+    dueDate: newCard.dueDate?.toISOString() ?? null,
+    startDate: newCard.startDate?.toISOString() ?? null,
+    position: newCard.position,
+    parentCardId: newCard.parentCardId,
+  });
+
+  await logActivity({ projectId: destAccess.projectId, userId, type: "CARD_CREATED", cardId: newCard.id });
+
+  return { card: newCard, droppedLabels, droppedCustomFields };
+}
+
+// Karti BASKA BIR PROJENIN kolonuna tasir (updateCard'in columnId yolu bunu
+// bilerek reddediyor). Etiketler isim eslesirse hedefteki karsiligina
+// baglanir, eslesmezse dusurulur; ozel alan degerleri proje-bazli oldugu icin
+// her zaman dusurulur. Kart numarasi hedef projenin sayacindan yeniden
+// alinir - projeler arasi tasinan bir kart eski projenin onekini tasimaya
+// devam etmemeli (orn. "QNT-42" baska projeye tasinca o projenin kendi
+// anahtarini almali).
+export async function moveCardToProject(cardId: string, targetColumnId: string, userId: string) {
+  const card = await prisma.card.findUnique({
+    where: { id: cardId },
+    include: { labels: { include: { label: true } }, customFieldValues: { include: { field: true } } },
+  });
+  if (!card) throw new NotFoundError("Kart");
+
+  const {
+    role,
+    projectId: sourceProjectId,
+    organizationId: sourceOrgId,
+    columnName: oldColumnName,
+  } = await checkColumnAccess(card.columnId, userId);
+  if (role !== "ADMIN") {
+    throw new ForbiddenError("Kartı sadece adminler başka bir projeye taşıyabilir");
+  }
+
+  const destAccess = await checkColumnAccess(targetColumnId, userId);
+  if (destAccess.organizationId !== sourceOrgId) {
+    throw new ForbiddenError("Kart farklı bir organizasyona taşınamaz");
+  }
+  if (destAccess.projectId === sourceProjectId) {
+    throw new ValidationError("Hedef kolon zaten bu projede - normal taşıma ucunu kullanın");
+  }
+
+  const droppedLabels: string[] = [];
+  const matchedLabelIds: string[] = [];
+  if (card.labels.length > 0) {
+    const targetLabels = await prisma.label.findMany({ where: { projectId: destAccess.projectId } });
+    for (const cl of card.labels) {
+      const match = targetLabels.find((l) => l.name.toLowerCase() === cl.label.name.toLowerCase());
+      if (match) matchedLabelIds.push(match.id);
+      else droppedLabels.push(cl.label.name);
+    }
+    await prisma.cardLabel.deleteMany({ where: { cardId } });
+    if (matchedLabelIds.length > 0) {
+      await prisma.cardLabel.createMany({ data: matchedLabelIds.map((labelId) => ({ cardId, labelId })) });
+    }
+  }
+
+  const droppedCustomFields = card.customFieldValues.map((v) => v.field.name);
+  if (card.customFieldValues.length > 0) {
+    await prisma.cardCustomFieldValue.deleteMany({ where: { cardId } });
+  }
+
+  const [number, lastCard] = await Promise.all([
+    allocateCardNumber(destAccess.projectId),
+    prisma.card.findFirst({
+      where: { columnId: targetColumnId },
+      orderBy: { position: "desc" },
+      select: { position: true },
+    }),
+  ]);
+  const position = (lastCard?.position ?? 0) + 1;
+
+  const updated = await prisma.card.update({
+    where: { id: cardId },
+    data: { columnId: targetColumnId, position, number, lastActivityAt: new Date() },
+    include: assigneeInclude,
+  });
+
+  // CARD_MOVED tek proje odasi varsayiyor (fromColumnId/toColumnId ayni
+  // board'da bekleniyor) - iki ayri proje icin eski odaya "silindi",
+  // yeni odaya "olusturuldu" yayinlamak mevcut frontend dinleyicileriyle
+  // dogru calisan tek yol.
+  broadcastToProject(sourceProjectId, SocketEvents.CARD_DELETED, { cardId: updated.id, projectId: sourceProjectId });
+  broadcastToProject(destAccess.projectId, SocketEvents.CARD_CREATED, {
+    id: updated.id,
+    title: updated.title,
+    description: updated.description,
+    columnId: updated.columnId,
+    projectId: destAccess.projectId,
+    assignees: updated.assignees.map((a) => ({ id: a.user.id, name: a.user.name, avatarUrl: a.user.avatarUrl })),
+    priority: updated.priority,
+    dueDate: updated.dueDate?.toISOString() ?? null,
+    startDate: updated.startDate?.toISOString() ?? null,
+    position: updated.position,
+    parentCardId: updated.parentCardId,
+  });
+
+  const destProject = await prisma.project.findUnique({ where: { id: destAccess.projectId }, select: { name: true } });
+
+  await logActivity({
+    projectId: sourceProjectId,
+    userId,
+    type: "CARD_MOVED",
+    cardId: updated.id,
+    data: { from: oldColumnName, to: `${destProject?.name ?? "başka proje"} / ${destAccess.columnName}` },
+  });
+
+  return { card: updated, droppedLabels, droppedCustomFields };
 }
 
 export async function deleteCard(cardId: string, userId: string) {
