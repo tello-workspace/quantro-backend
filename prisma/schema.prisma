@@ -184,6 +184,7 @@ model User {
   createdCardTemplates    CardTemplate[]
   watchedCards            CardWatcher[]
   uploadedProjectDocuments ProjectDocument[]
+  archivedCards           Card[]                   @relation("CardArchivedBy")
 }
 
 // ---------- ORGANIZATION ----------
@@ -445,6 +446,7 @@ model Card {
   updatedAt      DateTime  @updatedAt
   isArchived     Boolean   @default(false) // soft-delete: arsivlenen kart silinmez, listelerden gizlenir
   archivedAt     DateTime?
+  archivedById   String? // arsiv ekraninda "kim arsivledi" gostermek icin - geri yuklerken temizlenir
   lastActivityAt DateTime  @default(now()) // STALE MOTORUNUN KALBİ:
   // karta dokunan her işlem (taşıma, yorum, düzenleme, atama) bunu now() yapar.
   // Gece cron'u: lastActivityAt < now-7gün && column.isDone == false → stale
@@ -453,9 +455,10 @@ model Card {
   // blocker/blocked "sira" iliskisinden farkli olarak bu bir "aittir" iliskisi.
   parentCardId String?
 
-  column  Column @relation(fields: [columnId], references: [id], onDelete: Cascade)
-  creator User   @relation("CardCreator", fields: [creatorId], references: [id])
-  parent  Card?   @relation("CardParent", fields: [parentCardId], references: [id], onDelete: SetNull)
+  column     Column @relation(fields: [columnId], references: [id], onDelete: Cascade)
+  creator    User   @relation("CardCreator", fields: [creatorId], references: [id])
+  parent     Card?  @relation("CardParent", fields: [parentCardId], references: [id], onDelete: SetNull)
+  archivedBy User?  @relation("CardArchivedBy", fields: [archivedById], references: [id], onDelete: SetNull)
 
   comments          Comment[]
   labels            CardLabel[]

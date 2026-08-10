@@ -524,7 +524,7 @@ export async function archiveCard(cardId: string, userId: string) {
 
   await prisma.card.update({
     where: { id: cardId },
-    data: { isArchived: true, archivedAt: new Date() },
+    data: { isArchived: true, archivedAt: new Date(), archivedById: userId },
   });
 
   broadcastToProject(projectId, SocketEvents.CARD_UPDATED, { id: cardId, isArchived: true, projectId });
@@ -540,8 +540,31 @@ export async function restoreCard(cardId: string, userId: string) {
 
   await prisma.card.update({
     where: { id: cardId },
-    data: { isArchived: false, archivedAt: null },
+    data: { isArchived: false, archivedAt: null, archivedById: null },
   });
 
   broadcastToProject(projectId, SocketEvents.CARD_UPDATED, { id: cardId, isArchived: false, projectId });
+}
+
+// Proje genelinde arsivlenen kartlari listeler (Arsiv ekrani). Kolon bazli
+// getArchivedCards'tan farkli olarak tum kolonlari tarar - kullanici hangi
+// kolonda arsivlendigini hatirlamak zorunda kalmasin.
+export async function getArchivedCardsForProject(projectId: string, userId: string) {
+  const member = await prisma.organizationMember.findFirst({
+    where: { userId, organization: { projects: { some: { id: projectId } } } },
+  });
+  if (!member) {
+    const exists = await prisma.project.findUnique({ where: { id: projectId }, select: { id: true } });
+    if (!exists) throw new NotFoundError("Proje");
+    throw new ForbiddenError("Bu projeye erişim yetkiniz yok");
+  }
+
+  return prisma.card.findMany({
+    where: { column: { projectId }, isArchived: true },
+    orderBy: { archivedAt: "desc" },
+    include: {
+      column: { select: { id: true, name: true } },
+      archivedBy: { select: { id: true, name: true, avatarUrl: true } },
+    },
+  });
 }
