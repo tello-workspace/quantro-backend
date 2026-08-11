@@ -193,6 +193,7 @@ model User {
   watchedCards            CardWatcher[]
   uploadedProjectDocuments ProjectDocument[]
   archivedCards           Card[]                   @relation("CardArchivedBy")
+  savedViews              SavedView[]
 }
 
 // ---------- ORGANIZATION ----------
@@ -389,8 +390,32 @@ model Project {
   cardTemplates   CardTemplate[]
   customFields    CustomFieldDefinition[]
   documents       ProjectDocument[]
+  savedViews      SavedView[]
 
   @@unique([organizationId, key])
+}
+
+// BoardFilters.tsx'teki filtre durumu (arama, oncelik, atanan, etiket)
+// sayfa yenilenince kayboluyordu - "Bu haftaki gecikenler" gibi tekrar
+// kullanilabilir bir gorunum yoktu. filters serbest bicimli JSON: frontend'in
+// BoardFilters state'iyle birebir esleşir (search/priorities/assigneeIds/
+// labelIds) - semada sabitlemek yeni bir filtre turu eklendiginde migration
+// gerektirirdi, servis katmani da dogrulamiyor, sadece saklayip geri veriyor.
+model SavedView {
+  id        String   @id @default(cuid())
+  projectId String
+  ownerId   String
+  name      String
+  filters   Json
+  // false: sadece sahibi gorur. true: proje/org'daki herkes gorur ama
+  // yalnizca sahibi silebilir - "paylasilan" salt-okunur bir kisayoldur.
+  isShared  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  owner   User    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
 }
 
 // Proje bazli ek kart alani tanimi (Jira Custom Fields). Deger, tipi ne
