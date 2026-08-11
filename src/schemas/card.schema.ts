@@ -10,6 +10,7 @@ export const createCardSchema = z.object({
   position: z.number().optional(),
   parentCardId: z.string().nullable().optional(),
   estimate: z.number().int().min(0).max(9999).nullable().optional(),
+  estimateMinutes: z.number().int().min(0).max(100000).nullable().optional(),
 });
 
 export const updateCardSchema = z.object({
@@ -32,6 +33,7 @@ export const updateCardSchema = z.object({
   position: z.number().optional(),
   parentCardId: z.string().nullable().optional(),
   estimate: z.number().int().min(0).max(9999).nullable().optional(),
+  estimateMinutes: z.number().int().min(0).max(100000).nullable().optional(),
 });
 
 export const duplicateCardSchema = z.object({

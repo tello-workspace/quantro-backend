@@ -172,6 +172,7 @@ export async function createCard(columnId: string, input: CreateCardInput, userI
       lastActivityAt: new Date(),
       parentCardId: input.parentCardId ?? undefined,
       estimate: input.estimate ?? undefined,
+      estimateMinutes: input.estimateMinutes ?? undefined,
       assignees: {
         create: assigneeIds.map((id) => ({ userId: id })),
       },
@@ -312,7 +313,8 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
     input.dueDate !== undefined ||
     input.startDate !== undefined ||
     input.parentCardId !== undefined ||
-    input.estimate !== undefined;
+    input.estimate !== undefined ||
+    input.estimateMinutes !== undefined;
 
   if (icerikAlanlariDegisiyor && role !== "ADMIN") {
     throw new ForbiddenError(
@@ -351,7 +353,8 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
     input.priority !== undefined ||
     input.dueDate !== undefined ||
     input.startDate !== undefined ||
-    input.estimate !== undefined;
+    input.estimate !== undefined ||
+    input.estimateMinutes !== undefined;
 
   const oldAssigneeIds = new Set(card.assignees.map((a) => a.userId));
   let newlyAssignedIds: string[] = [];
@@ -372,6 +375,7 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
   if (input.columnId !== undefined) updateData.columnId = input.columnId;
   if (input.position !== undefined) updateData.position = input.position;
   if (input.estimate !== undefined) updateData.estimate = input.estimate;
+  if (input.estimateMinutes !== undefined) updateData.estimateMinutes = input.estimateMinutes;
   if (input.assigneeIds !== undefined) {
     updateData.assignees = {
       deleteMany: {},
@@ -496,6 +500,7 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
     position: updated.position,
     parentCardId: updated.parentCardId,
     estimate: updated.estimate,
+    estimateMinutes: updated.estimateMinutes,
   });
 
   return updated;

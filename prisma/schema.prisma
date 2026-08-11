@@ -196,6 +196,7 @@ model User {
   savedViews              SavedView[]
   resolvedComments        Comment[]                @relation("CommentResolvedBy")
   commentReactions        CommentReaction[]
+  timeLogs                TimeLog[]
 }
 
 // ---------- ORGANIZATION ----------
@@ -481,6 +482,12 @@ model Card {
   // basliginda toplam ve is yuku raporuna (insight.service.ts) gercekten
   // baglaniyor, olu alan olarak kalmiyor.
   estimate       Int?
+  // Zaman takibi (Card.estimate'ten AYRI bir eksen - o kaba boyutlandirma/
+  // kapasite plani icin, bu gercek saat/dakika). estimateMinutes elle
+  // girilir. spentMinutes, TimeLog kayitlarinin toplaminin ONBELLEGI - her
+  // okumada SUM() atmamak icin log eklenince/silininde burada guncellenir.
+  estimateMinutes Int?
+  spentMinutes    Int       @default(0)
   dueDate        DateTime?
   startDate      DateTime?
   position       Float
@@ -515,11 +522,32 @@ model Card {
   subtasks          Card[]                 @relation("CardParent")
   customFieldValues CardCustomFieldValue[]
   watchers          CardWatcher[]
+  timeLogs          TimeLog[]
 
   @@index([columnId])
   @@index([lastActivityAt]) // cron taraması hızlı olsun
   @@index([parentCardId])
   @@index([number]) // "QNT-42" araması: proje kolonlarına join edip numaraya bakıyoruz
+}
+
+// Elle girilen zaman kaydi ("kim, ne zaman, ne kadar"). Baslat/durdur
+// timer BILEREK yok - sekme kapanmasi, birden fazla cihaz, unutulan timer
+// bambaska bir problem sinifi (kartin kendi onerisi: once manuel).
+model TimeLog {
+  id       String   @id @default(cuid())
+  cardId   String
+  userId   String
+  minutes  Int
+  note     String?
+  // Isin YAPILDIGI gun (geriye donuk girise izin verir - "dun 2 saat
+  // calistim" gibi) - createdAt kaydin sisteme girildigi an, ikisi farkli.
+  loggedAt DateTime @default(now())
+  createdAt DateTime @default(now())
+
+  card Card @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([cardId])
 }
 
 // Coklu atama: bir kart birden fazla kisiye atanabilir (CardLabel ile ayni desen)
