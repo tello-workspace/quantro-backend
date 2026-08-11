@@ -11,6 +11,9 @@ export const createProjectSchema = z.object({
 export const updateProjectSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   description: z.string().max(500).optional(),
+  // Efor tahmini birimi - kolon basliginda ve is yuku raporunda "puan" mi
+  // "saat" mi yazacagini belirler. Karti degil, projeyi tercih eder.
+  estimateUnit: z.enum(["POINTS", "HOURS"]).optional(),
 });
 
 export type CreateProjectInput = z.infer<typeof createProjectSchema>;

@@ -24,6 +24,14 @@ enum Priority {
   URGENT
 }
 
+// Proje bazli tercih: efor tahmini "puan" (story point, gorecelik) mi yoksa
+// "saat" mi? Card.estimate her ikisinde de duz Int - birimi burada proje
+// belirler, karti degil.
+enum EstimateUnit {
+  POINTS
+  HOURS
+}
+
 enum ActivityType {
   CARD_CREATED
   CARD_UPDATED
@@ -368,6 +376,7 @@ model Project {
   // kullanılmaz - anahtar kalıcı bir referans, geri dönüştürülemez.
   key            String
   cardCounter    Int      @default(0)
+  estimateUnit   EstimateUnit @default(POINTS)
 
   organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   owner          User            @relation("ProjectOwner", fields: [ownerId], references: [id])
@@ -439,6 +448,12 @@ model Card {
   description    String?
   creatorId      String
   priority       Priority  @default(MEDIUM)
+  // Efor tahmini - birimi (puan/saat) Project.estimateUnit belirler. Daha
+  // once "storyPoints" olarak vardi, kullanimi sifirken kaldirilmisti
+  // (20260804095500_remove_sprint_and_story_points) - bu kez kolon
+  // basliginda toplam ve is yuku raporuna (insight.service.ts) gercekten
+  // baglaniyor, olu alan olarak kalmiyor.
+  estimate       Int?
   dueDate        DateTime?
   startDate      DateTime?
   position       Float

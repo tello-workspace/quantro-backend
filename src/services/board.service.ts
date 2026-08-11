@@ -40,11 +40,18 @@ async function checkProjectAccess(projectId: string, userId: string) {
     where: { id: projectId, organization: { members: { some: { userId } } } },
     select: {
       key: true,
+      estimateUnit: true,
       organization: { select: { members: { where: { userId }, select: { role: true } } } },
     },
   });
 
-  if (project) return { role: project.organization.members[0].role, projectKey: project.key };
+  if (project) {
+    return {
+      role: project.organization.members[0].role,
+      projectKey: project.key,
+      estimateUnit: project.estimateUnit,
+    };
+  }
 
   const exists = await prisma.project.findUnique({
     where: { id: projectId },
@@ -127,6 +134,7 @@ export async function getBoard(projectId: string, userId: string) {
         columnId: card.columnId,
         position: card.position,
         priority: card.priority,
+        estimate: card.estimate,
         lastActivityAt: card.lastActivityAt.toISOString(),
         assignees: card.assignees.map((a) => ({ id: a.user.id, name: a.user.name, avatarUrl: a.user.avatarUrl })),
         labels: card.labels.map((cl) => ({
@@ -150,5 +158,11 @@ export async function getBoard(projectId: string, userId: string) {
     };
   }
 
-  return { columns: boardColumns, tasks, myRole: access.role, projectKey: access.projectKey };
+  return {
+    columns: boardColumns,
+    tasks,
+    myRole: access.role,
+    projectKey: access.projectKey,
+    estimateUnit: access.estimateUnit,
+  };
 }

@@ -44,6 +44,7 @@ export async function getProjectInsights(projectId: string, userId: string) {
       id: true,
       title: true,
       priority: true,
+      estimate: true,
       dueDate: true,
       lastActivityAt: true,
       columnId: true,
@@ -68,16 +69,17 @@ export async function getProjectInsights(projectId: string, userId: string) {
     }));
 
   // Iş yükü dengesi: Done disindaki kartlari assignee'ye gore GROUP BY.
-  // Agirlik oncelikten geliyor (URGENT=3, HIGH=2, diger=1). Daha once
-  // storyPoints varsa o kullaniliyordu; story point ozelligi urunden
-  // kaldirilinca tek olcut yeniden oncelik oldu.
+  // Agirlik: kartin efor tahmini (Card.estimate) varsa o kullanilir - artik
+  // gercek bir olcut var. Tahmin girilmemis kartlarda onceki gibi oncelige
+  // dusulur (URGENT=3, HIGH=2, diger=1) ki tahminsiz kartlar yuk hesabinda
+  // sifir gorunup kisiyi "bossa cikarmasin".
   // Ortalamanin 1.5 kati ustundeki kisi "asiri yuklu" isaretlenir.
   const workloadMap = new Map<
     string,
     { user: { id: string; name: string; avatarUrl?: string | null }; weightedLoad: number; cardCount: number }
   >();
   for (const card of activeCards) {
-    const weight = PRIORITY_WEIGHT[card.priority];
+    const weight = card.estimate ?? PRIORITY_WEIGHT[card.priority];
     for (const assignee of card.assignees) {
       const entry = workloadMap.get(assignee.userId) ?? {
         user: assignee.user,
