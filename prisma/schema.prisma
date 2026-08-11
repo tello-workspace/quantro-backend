@@ -194,6 +194,8 @@ model User {
   uploadedProjectDocuments ProjectDocument[]
   archivedCards           Card[]                   @relation("CardArchivedBy")
   savedViews              SavedView[]
+  resolvedComments        Comment[]                @relation("CommentResolvedBy")
+  commentReactions        CommentReaction[]
 }
 
 // ---------- ORGANIZATION ----------
@@ -552,14 +554,47 @@ model CardWatcher {
 }
 
 model Comment {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   cardId    String
   authorId  String
   text      String
+  createdAt DateTime  @default(now())
+  editedAt  DateTime? // duzenlendiyse dolar - "duzenlendi" etiketi icin
+
+  // TEK SEVIYE thread (Slack modeli). Bir yanitin kendi parentCommentId'si
+  // hep null'dur - serviste yanita yanit verilirse otomatik olarak kok
+  // yoruma baglanir, sinirsiz ic ice yorum UI'da ve okumada felaket olurdu.
+  parentCommentId String?
+
+  // Cozuldu isareti sadece KOK yorumlar (thread) icin anlamli - yaniti
+  // cozulmus isaretlemek serviste reddedilir. Yazar disinda herkes
+  // cozebilir/acabilir (GitHub PR "resolve conversation" gibi takim eylemi).
+  resolvedAt   DateTime?
+  resolvedById String?
+
+  card       Card              @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  author     User              @relation(fields: [authorId], references: [id])
+  parent     Comment?          @relation("CommentReplies", fields: [parentCommentId], references: [id], onDelete: Cascade)
+  replies    Comment[]         @relation("CommentReplies")
+  resolvedBy User?             @relation("CommentResolvedBy", fields: [resolvedById], references: [id], onDelete: SetNull)
+  reactions  CommentReaction[]
+
+  @@index([cardId])
+  @@index([parentCommentId])
+}
+
+// Kisi basina ayni emoji ile bir kez reaksiyon verebilir, farkli emojilerle
+// birden fazla verebilir - PK bu yuzden ucu birden (commentId, userId, emoji).
+model CommentReaction {
+  commentId String
+  userId    String
+  emoji     String
   createdAt DateTime @default(now())
 
-  card   Card @relation(fields: [cardId], references: [id], onDelete: Cascade)
-  author User @relation(fields: [authorId], references: [id])
+  comment Comment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([commentId, userId, emoji])
 }
 
 model Label {

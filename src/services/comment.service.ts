@@ -1,10 +1,13 @@
 import { prisma } from "@/lib/prisma";
-import { NotFoundError, ForbiddenError } from "@/utils/errors";
+import { NotFoundError, ForbiddenError, ValidationError } from "@/utils/errors";
 import { logActivity } from "@/services/activity.service";
 import { broadcastToProject, SocketEvents } from "@/server/socket";
 import * as notificationService from "@/services/notification.service";
 import { notifyWatchers, autoWatch } from "@/services/watcher.service";
 import type { CreateCommentInput, UpdateCommentInput } from "@/schemas/comment.schema";
+
+const authorSelect = { select: { id: true, name: true, email: true, avatarUrl: true } } as const;
+const reactionSelect = { select: { userId: true, emoji: true } } as const;
 
 // Kartın kolonuna → projesine → organizasyonuna erişim kontrolü
 async function checkCardAccess(cardId: string, userId: string) {
@@ -58,14 +61,23 @@ async function extractMentionedUserIds(
   return Array.from(mentioned);
 }
 
+// Kok yorumlari, her birinin yanitlariyla birlikte dondurur. Tek seviye
+// thread oldugu icin (bkz. schema yorumu) replies kendi ici tekrar
+// dallanmiyor - duz bir liste yeterli.
 export async function getComments(cardId: string, userId: string) {
   await checkCardAccess(cardId, userId);
 
   const comments = await prisma.comment.findMany({
-    where: { cardId },
+    where: { cardId, parentCommentId: null },
     orderBy: { createdAt: "asc" },
     include: {
-      author: { select: { id: true, name: true, email: true, avatarUrl: true } },
+      author: authorSelect,
+      resolvedBy: { select: { id: true, name: true } },
+      reactions: reactionSelect,
+      replies: {
+        orderBy: { createdAt: "asc" },
+        include: { author: authorSelect, reactions: reactionSelect },
+      },
     },
   });
 
@@ -75,15 +87,27 @@ export async function getComments(cardId: string, userId: string) {
 export async function createComment(cardId: string, input: CreateCommentInput, userId: string) {
   const { projectId, organizationId, cardTitle } = await checkCardAccess(cardId, userId);
 
+  // Sinirsiz ic ice yorumu onlemek icin: hedef parent'in KENDI parent'i varsa
+  // (yani o da bir yanitsa) gercek hedef onun kok yorumu olur. Kullanici
+  // "yanita yanit ver" diye ugrasmaz, sessizce dogru yere baglanir.
+  let parentCommentId: string | null = null;
+  if (input.parentCommentId) {
+    const parent = await prisma.comment.findUnique({
+      where: { id: input.parentCommentId },
+      select: { id: true, cardId: true, parentCommentId: true, authorId: true },
+    });
+    if (!parent || parent.cardId !== cardId) throw new NotFoundError("Yanıtlanan yorum");
+    parentCommentId = parent.parentCommentId ?? parent.id;
+  }
+
   const comment = await prisma.comment.create({
     data: {
       cardId,
       authorId: userId,
       text: input.text,
+      parentCommentId,
     },
-    include: {
-      author: { select: { id: true, name: true, email: true, avatarUrl: true } },
-    },
+    include: { author: authorSelect },
   });
 
   broadcastToProject(projectId, SocketEvents.COMMENT_ADDED, {
@@ -93,6 +117,7 @@ export async function createComment(cardId: string, input: CreateCommentInput, u
     authorName: comment.author.name,
     text: comment.text,
     createdAt: comment.createdAt.toISOString(),
+    parentCommentId: comment.parentCommentId,
   });
 
   await logActivity({
@@ -150,10 +175,8 @@ export async function updateComment(commentId: string, input: UpdateCommentInput
 
   const updated = await prisma.comment.update({
     where: { id: commentId },
-    data: { text: input.text },
-    include: {
-      author: { select: { id: true, name: true, email: true, avatarUrl: true } },
-    },
+    data: { text: input.text, editedAt: new Date() },
+    include: { author: authorSelect },
   });
 
   broadcastToProject(projectId, SocketEvents.COMMENT_UPDATED, {
@@ -163,9 +186,71 @@ export async function updateComment(commentId: string, input: UpdateCommentInput
     authorName: updated.author.name,
     text: updated.text,
     createdAt: updated.createdAt.toISOString(),
+    editedAt: updated.editedAt?.toISOString() ?? null,
   });
 
   return updated;
+}
+
+// Cozuldu/ac islemi sadece KOK yoruma (thread) uygulanir - GitHub PR'daki
+// "resolve conversation" gibi yazardan bagimsiz bir takim eylemi, bu yuzden
+// yazar kontrolu yok, sadece karta erisim yeterli.
+export async function resolveComment(commentId: string, userId: string, resolved: boolean) {
+  const comment = await prisma.comment.findUnique({ where: { id: commentId } });
+  if (!comment) throw new NotFoundError("Yorum");
+  if (comment.parentCommentId) throw new ValidationError("Bir yanıt tek başına çözüldü işaretlenemez");
+
+  const { projectId } = await checkCardAccess(comment.cardId, userId);
+
+  const updated = await prisma.comment.update({
+    where: { id: commentId },
+    data: resolved
+      ? { resolvedAt: new Date(), resolvedById: userId }
+      : { resolvedAt: null, resolvedById: null },
+    include: { resolvedBy: { select: { id: true, name: true } } },
+  });
+
+  broadcastToProject(projectId, SocketEvents.COMMENT_UPDATED, {
+    id: updated.id,
+    cardId: updated.cardId,
+    resolvedAt: updated.resolvedAt?.toISOString() ?? null,
+    resolvedBy: updated.resolvedBy,
+  });
+
+  return updated;
+}
+
+// Toggle: ayni kullanici ayni emoji ile tekrar tiklarsa reaksiyon kalkar.
+export async function toggleReaction(commentId: string, userId: string, emoji: string) {
+  const comment = await prisma.comment.findUnique({ where: { id: commentId }, select: { cardId: true } });
+  if (!comment) throw new NotFoundError("Yorum");
+
+  const { projectId } = await checkCardAccess(comment.cardId, userId);
+
+  const existing = await prisma.commentReaction.findUnique({
+    where: { commentId_userId_emoji: { commentId, userId, emoji } },
+  });
+
+  if (existing) {
+    await prisma.commentReaction.delete({
+      where: { commentId_userId_emoji: { commentId, userId, emoji } },
+    });
+  } else {
+    await prisma.commentReaction.create({ data: { commentId, userId, emoji } });
+  }
+
+  const reactions = await prisma.commentReaction.findMany({
+    where: { commentId },
+    select: { userId: true, emoji: true },
+  });
+
+  broadcastToProject(projectId, SocketEvents.COMMENT_UPDATED, {
+    id: commentId,
+    cardId: comment.cardId,
+    reactions,
+  });
+
+  return reactions;
 }
 
 export async function deleteComment(commentId: string, userId: string) {
