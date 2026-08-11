@@ -2,23 +2,18 @@ import { prisma } from "@/lib/prisma";
 import { NotFoundError, ForbiddenError } from "@/utils/errors";
 import * as notificationService from "@/services/notification.service";
 import { logActivity } from "@/services/activity.service";
+import { checkProjectAccess } from "@/services/access-control.service";
 import { broadcastToProject, SocketEvents } from "@/server/socket";
 import { allocateCardNumber } from "@/services/card-key.service";
 import type { AutomationRule, AutomationTrigger } from "@prisma/client";
 import type { CreateAutomationRuleInput, UpdateAutomationRuleInput } from "@/schemas/automation.schema";
 
+// checkProjectAccess gorunurluk/GUEST kuralini da uyguluyor - PRIVATE bir
+// projede org ADMIN'i bile ProjectMember degilse burada elenir (eskiden
+// sadece org rolune bakildigi icin bu durumu atlıyordu).
 async function checkProjectAdmin(projectId: string, userId: string) {
-  const project = await prisma.project.findUnique({
-    where: { id: projectId },
-    select: { organizationId: true },
-  });
-  if (!project) throw new NotFoundError("Proje");
-
-  const member = await prisma.organizationMember.findUnique({
-    where: { organizationId_userId: { organizationId: project.organizationId, userId } },
-  });
-  if (!member) throw new ForbiddenError("Bu projeye erişim yetkiniz yok");
-  if (member.role !== "ADMIN") throw new ForbiddenError("Otomasyon kurallarını sadece adminler yönetebilir");
+  const access = await checkProjectAccess(projectId, userId);
+  if (access.role !== "ADMIN") throw new ForbiddenError("Otomasyon kurallarını sadece adminler yönetebilir");
 }
 
 export async function listAutomationRules(projectId: string, userId: string) {

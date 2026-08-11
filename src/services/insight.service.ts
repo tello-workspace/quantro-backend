@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { NotFoundError, ForbiddenError } from "@/utils/errors";
+import { checkProjectAccess } from "@/services/access-control.service";
 import type { Priority } from "@prisma/client";
 
 const STALE_DAYS = 7;
@@ -13,21 +13,6 @@ const PRIORITY_WEIGHT: Record<Priority, number> = {
   MEDIUM: 1,
   LOW: 1,
 };
-
-async function checkProjectAccess(projectId: string, userId: string) {
-  const project = await prisma.project.findUnique({
-    where: { id: projectId },
-    select: { organizationId: true },
-  });
-  if (!project) throw new NotFoundError("Proje");
-
-  const member = await prisma.organizationMember.findUnique({
-    where: {
-      organizationId_userId: { organizationId: project.organizationId, userId },
-    },
-  });
-  if (!member) throw new ForbiddenError("Bu projeye erişim yetkiniz yok");
-}
 
 export async function getProjectInsights(projectId: string, userId: string) {
   await checkProjectAccess(projectId, userId);

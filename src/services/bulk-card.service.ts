@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { ForbiddenError, NotFoundError } from "@/utils/errors";
 import * as cardService from "@/services/card.service";
+import { checkProjectAccess } from "@/services/access-control.service";
 import { broadcastToProject, SocketEvents } from "@/server/socket";
 
 // Toplu islem, yetki kurallarini YENIDEN YAZMAK yerine tek kartlik servisleri
@@ -37,23 +38,13 @@ import { broadcastToProject, SocketEvents } from "@/server/socket";
 // Kart basina sormak ayni soruyu N kez sormakti.
 
 /**
- * Toplu islemin yetkisini BIR KEZ cozer. checkColumnAccess ile ayni kurali
- * uygular: organizasyon uyesi olmayan reddedilir, rol geri doner.
+ * Toplu islemin yetkisini BIR KEZ cozer. access-control.service ile ayni
+ * kurali uygular: organizasyon uyeligi VE gorunurluk/GUEST kurali (rol geri
+ * doner).
  */
 async function projeYetkisi(projectId: string, userId: string) {
-  const proje = await prisma.project.findUnique({
-    where: { id: projectId },
-    select: { organizationId: true },
-  });
-  if (!proje) throw new NotFoundError("Proje");
-
-  const uye = await prisma.organizationMember.findUnique({
-    where: { organizationId_userId: { organizationId: proje.organizationId, userId } },
-    select: { role: true },
-  });
-  if (!uye) throw new ForbiddenError("Bu projeye erişim yetkiniz yok");
-
-  return { role: uye.role, organizationId: proje.organizationId };
+  const access = await checkProjectAccess(projectId, userId);
+  return { role: access.role, organizationId: access.organizationId };
 }
 
 export type BulkAction = "move" | "assign" | "label" | "archive" | "delete" | "watch" | "unwatch";

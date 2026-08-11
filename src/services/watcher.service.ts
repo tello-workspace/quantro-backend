@@ -1,23 +1,6 @@
 import { prisma } from "@/lib/prisma";
-import { NotFoundError, ForbiddenError } from "@/utils/errors";
+import { checkCardAccess } from "@/services/access-control.service";
 import * as notificationService from "@/services/notification.service";
-
-// Kartın kolonuna → projesine → organizasyonuna erişim kontrolü
-// (comment.service.ts ile aynı desen)
-async function checkCardAccess(cardId: string, userId: string) {
-  const card = await prisma.card.findUnique({
-    where: { id: cardId },
-    select: { column: { select: { projectId: true, project: { select: { organizationId: true } } } } },
-  });
-  if (!card) throw new NotFoundError("Kart");
-
-  const member = await prisma.organizationMember.findUnique({
-    where: {
-      organizationId_userId: { organizationId: card.column.project.organizationId, userId },
-    },
-  });
-  if (!member) throw new ForbiddenError("Bu karta erişim yetkiniz yok");
-}
 
 export async function getWatchStatus(cardId: string, userId: string) {
   await checkCardAccess(cardId, userId);

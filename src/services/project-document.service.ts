@@ -2,6 +2,7 @@ import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
 import { NotFoundError, ForbiddenError, AppError } from "@/utils/errors";
 import { supabaseAdmin, PROJECT_DOCUMENTS_BUCKET, storageKeyHint } from "@/lib/supabaseAdmin";
+import { checkProjectAccess } from "@/services/access-control.service";
 import {
   ALLOWED_MIME_TYPES,
   MAX_DOCUMENTS_PER_PROJECT,
@@ -31,19 +32,6 @@ function extensionForMime(mimeType: string): string {
   return EXTENSION_BY_MIME[mimeType] ?? "bin";
 }
 
-// Projeye -> organizasyona erisim kontrolu (board.service.ts ile ayni desen)
-async function checkProjectAccess(projectId: string, userId: string) {
-  const project = await prisma.project.findFirst({
-    where: { id: projectId, organization: { members: { some: { userId } } } },
-    select: { organization: { select: { members: { where: { userId }, select: { role: true } } } } },
-  });
-
-  if (project) return { role: project.organization.members[0].role };
-
-  const exists = await prisma.project.findUnique({ where: { id: projectId }, select: { id: true } });
-  if (!exists) throw new NotFoundError("Proje");
-  throw new ForbiddenError("Bu projeye erişim yetkiniz yok");
-}
 
 export async function listDocuments(projectId: string, userId: string) {
   await checkProjectAccess(projectId, userId);

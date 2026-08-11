@@ -1,28 +1,8 @@
 import { prisma } from "@/lib/prisma";
 import { NotFoundError, ForbiddenError } from "@/utils/errors";
+import { checkProjectAccess } from "@/services/access-control.service";
 import { broadcastToProject, SocketEvents } from "@/server/socket";
 import type { CreateColumnInput, UpdateColumnInput } from "@/schemas/column.schema";
-
-// Projenin organizasyonuna üye mi kontrol et
-async function checkProjectAccess(projectId: string, userId: string) {
-  const project = await prisma.project.findUnique({
-    where: { id: projectId },
-    select: { organizationId: true },
-  });
-  if (!project) throw new NotFoundError("Proje");
-
-  const member = await prisma.organizationMember.findUnique({
-    where: {
-      organizationId_userId: {
-        organizationId: project.organizationId,
-        userId,
-      },
-    },
-  });
-  if (!member) throw new ForbiddenError("Bu projeye erişim yetkiniz yok");
-
-  return { role: member.role };
-}
 
 export async function createColumn(projectId: string, input: CreateColumnInput, userId: string) {
   const { role } = await checkProjectAccess(projectId, userId);

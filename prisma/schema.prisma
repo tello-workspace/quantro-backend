@@ -15,6 +15,19 @@ datasource db {
 enum Role {
   ADMIN
   MEMBER
+  // Musteri/stajyer gibi organizasyona alinip yalnizca DAVET EDILDIGI
+  // proje(ler)i gormesi gereken kisiler icin. Gorunurlukten (Project.
+  // visibility) BAGIMSIZ olarak GUEST her zaman ProjectMember'a eklenmis
+  // olmak zorunda - GUEST'in butun anlami bu.
+  GUEST
+}
+
+// Kisitlayicilik artan sirayla: ORG (herkes) > TEAM (adminler + davetliler)
+// > PRIVATE (sadece sahibi + davetliler, admin bile otomatik gormez).
+enum ProjectVisibility {
+  ORG
+  TEAM
+  PRIVATE
 }
 
 enum Priority {
@@ -197,6 +210,7 @@ model User {
   resolvedComments        Comment[]                @relation("CommentResolvedBy")
   commentReactions        CommentReaction[]
   timeLogs                TimeLog[]
+  projectMemberships      ProjectMember[]
 }
 
 // ---------- ORGANIZATION ----------
@@ -381,12 +395,17 @@ model Project {
   key            String
   cardCounter    Int      @default(0)
   estimateUnit   EstimateUnit @default(POINTS)
+  // Varsayilan ORG: mevcut projelerin hepsi geriye donuk olarak eskisi
+  // gibi (organizasyondaki herkese acik) davranmaya devam eder - bu
+  // ozelligi acmadan hicbir proje aniden gizlenmez.
+  visibility     ProjectVisibility @default(ORG)
 
   organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   owner          User            @relation("ProjectOwner", fields: [ownerId], references: [id])
   columns        Column[]
   labels         Label[]
   activities     Activity[]
+  members        ProjectMember[]
   // organizasyon içinde tek: "QNT-42" bir org'da tek bir kartı gösterir
   changeRequests ChangeRequest[]
   automationRules AutomationRule[]
@@ -396,6 +415,21 @@ model Project {
   savedViews      SavedView[]
 
   @@unique([organizationId, key])
+}
+
+// Bir projeye ACIKCA verilmis erisim. ORG gorunurlukte hic kontrol
+// EDILMEZ (herkes zaten gorur). TEAM/PRIVATE'te ve her zaman GUEST rolu
+// icin bu tablo "davetli listesi" gorevi gorur - bkz. access-control.service.ts.
+model ProjectMember {
+  projectId String
+  userId    String
+  addedAt   DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([projectId, userId])
+  @@index([userId])
 }
 
 // BoardFilters.tsx'teki filtre durumu (arama, oncelik, atanan, etiket)

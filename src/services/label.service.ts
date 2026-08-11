@@ -1,48 +1,7 @@
 import { prisma } from "@/lib/prisma";
-import { NotFoundError, ForbiddenError, ConflictError } from "@/utils/errors";
+import { NotFoundError, ConflictError } from "@/utils/errors";
+import { checkProjectAccess, checkCardAccess } from "@/services/access-control.service";
 import type { CreateLabelInput, UpdateLabelInput } from "@/schemas/label.schema";
-
-// Projenin organizasyonuna üye mi kontrol et (column.service.ts'deki ile aynı desen)
-async function checkProjectAccess(projectId: string, userId: string) {
-  const project = await prisma.project.findUnique({
-    where: { id: projectId },
-    select: { organizationId: true },
-  });
-  if (!project) throw new NotFoundError("Proje");
-
-  const member = await prisma.organizationMember.findUnique({
-    where: {
-      organizationId_userId: {
-        organizationId: project.organizationId,
-        userId,
-      },
-    },
-  });
-  if (!member) throw new ForbiddenError("Bu projeye erişim yetkiniz yok");
-
-  return { role: member.role };
-}
-
-// Kart erişim kontrolü (comment.service.ts'deki ile aynı desen)
-async function checkCardAccess(cardId: string, userId: string) {
-  const card = await prisma.card.findUnique({
-    where: { id: cardId },
-    select: { column: { select: { project: { select: { organizationId: true } } } } },
-  });
-  if (!card) throw new NotFoundError("Kart");
-
-  const member = await prisma.organizationMember.findUnique({
-    where: {
-      organizationId_userId: {
-        organizationId: card.column.project.organizationId,
-        userId,
-      },
-    },
-  });
-  if (!member) throw new ForbiddenError("Bu karta erişim yetkiniz yok");
-
-  return { role: member.role };
-}
 
 // --- LABEL CRUD ---
 

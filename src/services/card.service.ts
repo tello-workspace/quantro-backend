@@ -6,6 +6,7 @@ import { logActivity } from "@/services/activity.service";
 import * as automationService from "@/services/automation.service";
 import { notifyWatchers } from "@/services/watcher.service";
 import { allocateCardNumber } from "@/services/card-key.service";
+import { checkColumnAccess, checkProjectAccess } from "@/services/access-control.service";
 import { broadcastToProject, SocketEvents } from "@/server/socket";
 import type { CreateCardInput, UpdateCardInput } from "@/schemas/card.schema";
 import type { Priority } from "@prisma/client";
@@ -15,32 +16,6 @@ const assigneeInclude = {
     include: { user: { select: { id: true, name: true, email: true, avatarUrl: true } } },
   },
 } as const;
-
-// Kolonun projesine ve organizasyonuna erişim kontrolü
-async function checkColumnAccess(columnId: string, userId: string) {
-  const column = await prisma.column.findUnique({
-    where: { id: columnId },
-    select: { name: true, projectId: true, project: { select: { organizationId: true } } },
-  });
-  if (!column) throw new NotFoundError("Sütun");
-
-  const member = await prisma.organizationMember.findUnique({
-    where: {
-      organizationId_userId: {
-        organizationId: column.project.organizationId,
-        userId,
-      },
-    },
-  });
-  if (!member) throw new ForbiddenError("Bu projeye erişim yetkiniz yok");
-
-  return {
-    role: member.role,
-    projectId: column.projectId,
-    columnName: column.name,
-    organizationId: column.project.organizationId,
-  };
-}
 
 // Fraksiyonel pozisyon hesapla
 // Verilen kolonda en sondaki position'ı bulup +1 verir
@@ -817,14 +792,7 @@ export async function restoreCard(cardId: string, userId: string) {
 // getArchivedCards'tan farkli olarak tum kolonlari tarar - kullanici hangi
 // kolonda arsivlendigini hatirlamak zorunda kalmasin.
 export async function getArchivedCardsForProject(projectId: string, userId: string) {
-  const member = await prisma.organizationMember.findFirst({
-    where: { userId, organization: { projects: { some: { id: projectId } } } },
-  });
-  if (!member) {
-    const exists = await prisma.project.findUnique({ where: { id: projectId }, select: { id: true } });
-    if (!exists) throw new NotFoundError("Proje");
-    throw new ForbiddenError("Bu projeye erişim yetkiniz yok");
-  }
+  await checkProjectAccess(projectId, userId);
 
   return prisma.card.findMany({
     where: { column: { projectId }, isArchived: true },

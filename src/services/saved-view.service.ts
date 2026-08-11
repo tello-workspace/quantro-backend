@@ -1,22 +1,8 @@
 import { prisma } from "@/lib/prisma";
 import { NotFoundError, ForbiddenError } from "@/utils/errors";
+import { checkProjectAccess } from "@/services/access-control.service";
 import type { Prisma } from "@prisma/client";
 import type { CreateSavedViewInput } from "@/schemas/saved-view.schema";
-
-async function checkProjectAccess(projectId: string, userId: string) {
-  const project = await prisma.project.findUnique({
-    where: { id: projectId },
-    select: { organizationId: true },
-  });
-  if (!project) throw new NotFoundError("Proje");
-
-  const member = await prisma.organizationMember.findUnique({
-    where: { organizationId_userId: { organizationId: project.organizationId, userId } },
-  });
-  if (!member) throw new ForbiddenError("Bu projeye erişim yetkiniz yok");
-
-  return { role: member.role };
-}
 
 // Kendi gorunumlerin + baskalarinin PAYLASTIGI gorunumler - board'daki filtre
 // menusune tek listede dolduruluyor, "benim" / "paylasilan" ayrimini

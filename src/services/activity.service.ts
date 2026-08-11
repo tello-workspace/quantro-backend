@@ -1,21 +1,6 @@
 import { prisma } from "@/lib/prisma";
-import { NotFoundError, ForbiddenError } from "@/utils/errors";
+import { checkProjectAccess } from "@/services/access-control.service";
 import type { ActivityType, Prisma } from "@prisma/client";
-
-async function checkProjectAccess(projectId: string, userId: string) {
-  const project = await prisma.project.findUnique({
-    where: { id: projectId },
-    select: { organizationId: true },
-  });
-  if (!project) throw new NotFoundError("Proje");
-
-  const member = await prisma.organizationMember.findUnique({
-    where: {
-      organizationId_userId: { organizationId: project.organizationId, userId },
-    },
-  });
-  if (!member) throw new ForbiddenError("Bu projeye erişim yetkiniz yok");
-}
 
 interface LogActivityInput {
   projectId: string;

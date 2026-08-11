@@ -1,28 +1,8 @@
 import { prisma } from "@/lib/prisma";
-import { NotFoundError, ForbiddenError } from "@/utils/errors";
+import { NotFoundError } from "@/utils/errors";
+import { checkCardAccess } from "@/services/access-control.service";
 import { broadcastToProject, SocketEvents } from "@/server/socket";
 import type { CreateChecklistItemInput, UpdateChecklistItemInput } from "@/schemas/checklist.schema";
-
-// Kartın kolonuna → projesine → organizasyonuna erişim kontrolü (comment.service.ts ile aynı desen)
-async function checkCardAccess(cardId: string, userId: string) {
-  const card = await prisma.card.findUnique({
-    where: { id: cardId },
-    select: { column: { select: { projectId: true, project: { select: { organizationId: true } } } } },
-  });
-  if (!card) throw new NotFoundError("Kart");
-
-  const member = await prisma.organizationMember.findUnique({
-    where: {
-      organizationId_userId: {
-        organizationId: card.column.project.organizationId,
-        userId,
-      },
-    },
-  });
-  if (!member) throw new ForbiddenError("Bu karta erişim yetkiniz yok");
-
-  return { projectId: card.column.projectId };
-}
 
 export async function getChecklistItems(cardId: string, userId: string) {
   await checkCardAccess(cardId, userId);

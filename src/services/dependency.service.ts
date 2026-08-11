@@ -1,32 +1,10 @@
 import { prisma } from "@/lib/prisma";
-import { NotFoundError, ForbiddenError, ConflictError, ValidationError } from "@/utils/errors";
+import { NotFoundError, ConflictError, ValidationError } from "@/utils/errors";
+import { checkCardAccess } from "@/services/access-control.service";
 import * as notificationService from "@/services/notification.service";
 import { logActivity } from "@/services/activity.service";
 import { broadcastToProject, SocketEvents } from "@/server/socket";
 import type { DependencyRelationType } from "@prisma/client";
-
-async function checkCardAccess(cardId: string, userId: string) {
-  const card = await prisma.card.findUnique({
-    where: { id: cardId },
-    select: {
-      columnId: true,
-      column: { select: { projectId: true, project: { select: { organizationId: true } } } },
-    },
-  });
-  if (!card) throw new NotFoundError("Kart");
-
-  const member = await prisma.organizationMember.findUnique({
-    where: {
-      organizationId_userId: {
-        organizationId: card.column.project.organizationId,
-        userId,
-      },
-    },
-  });
-  if (!member) throw new ForbiddenError("Bu karta erişim yetkiniz yok");
-
-  return { projectId: card.column.projectId };
-}
 
 // blockerId'den blockedId'ye yeni bir "blocker -> blocked" kenari eklersek
 // dongu olusur mu? blockedId'den baslayip mevcut "blocking" kenarlarini takip

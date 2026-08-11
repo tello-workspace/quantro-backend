@@ -7,7 +7,9 @@ import {
   normalizeProjectKey,
   suggestProjectKey,
 } from "@/services/card-key.service";
+import { checkProjectAccess, filterVisibleProjects, assertCanManageProjectAccess } from "@/services/access-control.service";
 import type { CreateProjectInput, UpdateProjectInput } from "@/schemas/project.schema";
+import type { ProjectVisibility } from "@prisma/client";
 
 // Organization üyeliğini kontrol et
 async function checkMembership(organizationId: string, userId: string) {
@@ -92,31 +94,89 @@ export async function getProjects(organizationId: string, userId: string) {
 
   if (!member) throw new ForbiddenError("Bu organizasyona erişim yetkiniz yok");
 
-  return projects;
+  // GUEST'ler ve TEAM/PRIVATE gorunurluklu projeler icin acikca eklenmemis
+  // uyeler listede o projeyi hic gormemeli - aksi halde "sadece tek projeyi
+  // gorsun" davetinin anlami kalmaz (kart adi kendi kendine gorunur).
+  return filterVisibleProjects(projects, userId, member.role);
 }
 
 export async function getProjectById(organizationId: string, projectId: string, userId: string) {
-  const [member, project] = await Promise.all([
-    checkMembership(organizationId, userId),
-    prisma.project.findFirst({
-      where: { id: projectId, organizationId },
-      include: {
-        columns: {
-          orderBy: { position: "asc" },
-          include: {
-            _count: { select: { cards: true } },
-          },
+  // checkProjectAccess org uyeligini VE proje gorunurluk/GUEST kuralini
+  // birlikte kontrol ediyor - checkMembership'in eskiden tek basina yaptigi
+  // (sadece org uyeligi) burada yetersizdi.
+  const access = await checkProjectAccess(projectId, userId);
+  if (access.organizationId !== organizationId) throw new NotFoundError("Proje");
+
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    include: {
+      columns: {
+        orderBy: { position: "asc" },
+        include: {
+          _count: { select: { cards: true } },
         },
-        _count: { select: { columns: true } },
       },
-    }),
-  ]);
-
-  if (!member) throw new ForbiddenError("Bu organizasyona erişim yetkiniz yok");
-
+      _count: { select: { columns: true } },
+    },
+  });
   if (!project) throw new NotFoundError("Proje");
 
   return project;
+}
+
+export async function listProjectMembers(projectId: string, userId: string) {
+  await checkProjectAccess(projectId, userId);
+
+  return prisma.projectMember.findMany({
+    where: { projectId },
+    orderBy: { addedAt: "asc" },
+    include: { user: { select: { id: true, name: true, email: true, avatarUrl: true } } },
+  });
+}
+
+export async function updateProjectVisibility(projectId: string, visibility: ProjectVisibility, userId: string) {
+  const access = await checkProjectAccess(projectId, userId);
+  assertCanManageProjectAccess(access);
+
+  const updated = await prisma.project.update({ where: { id: projectId }, data: { visibility } });
+
+  broadcastToOrganization(access.organizationId, SocketEvents.PROJECT_UPDATED, {
+    id: updated.id,
+    name: updated.name,
+    description: updated.description,
+    organizationId: access.organizationId,
+    ownerId: updated.ownerId,
+  });
+
+  return updated;
+}
+
+// targetUserId ayni organizasyonun uyesi olmak zorunda - baska bir org'dan
+// birini bir projeye eklemek GUEST/gorunurluk mekanizmasinin tamamen
+// disinda, ayri (ve cok daha buyuk) bir "cok-organizasyonlu proje" ozelligi
+// olurdu.
+export async function addProjectMember(projectId: string, targetUserId: string, userId: string) {
+  const access = await checkProjectAccess(projectId, userId);
+  assertCanManageProjectAccess(access);
+
+  const targetMember = await prisma.organizationMember.findUnique({
+    where: { organizationId_userId: { organizationId: access.organizationId, userId: targetUserId } },
+  });
+  if (!targetMember) throw new ForbiddenError("Kullanıcı bu organizasyonun üyesi değil");
+
+  return prisma.projectMember.upsert({
+    where: { projectId_userId: { projectId, userId: targetUserId } },
+    create: { projectId, userId: targetUserId },
+    update: {},
+    include: { user: { select: { id: true, name: true, email: true, avatarUrl: true } } },
+  });
+}
+
+export async function removeProjectMember(projectId: string, targetUserId: string, userId: string) {
+  const access = await checkProjectAccess(projectId, userId);
+  assertCanManageProjectAccess(access);
+
+  await prisma.projectMember.deleteMany({ where: { projectId, userId: targetUserId } });
 }
 
 export async function updateProject(organizationId: string, projectId: string, input: UpdateProjectInput, userId: string) {

@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { ForbiddenError } from "@/utils/errors";
 import { findCardByKey, formatCardKey, parseCardKey } from "@/services/card-key.service";
+import { getVisibleProjectIds } from "@/services/access-control.service";
 
 interface SearchRow {
   id: string;
@@ -26,11 +27,19 @@ interface SearchRow {
 // "Ödeme" gecen kartlari da bulabilmeli — bu yuzden duz "contains" yerine
 // raw SQL + unaccent() extension'i kullaniliyor.
 export async function searchOrganization(organizationId: string, userId: string, query: string) {
-  const member = await prisma.organizationMember.findUnique({
-    where: { organizationId_userId: { organizationId, userId } },
-    select: { userId: true },
-  });
-  if (!member) throw new ForbiddenError("Bu organizasyona erişim yetkiniz yok");
+  // GUEST'ler ve TEAM/PRIVATE gorunurluklu projeler icin acikca eklenmemis
+  // uyeler o projenin kartlarini aramada da gormemeli - aksi halde board'da
+  // gizlenen bir proje, arama uzerinden baypas edilmis olurdu. Bos donen
+  // Set uyeligin kendisi gecersiz demektir.
+  const visibleProjectIds = await getVisibleProjectIds(organizationId, userId);
+  if (visibleProjectIds.size === 0) {
+    const isMember = await prisma.organizationMember.findUnique({
+      where: { organizationId_userId: { organizationId, userId } },
+      select: { userId: true },
+    });
+    if (!isMember) throw new ForbiddenError("Bu organizasyona erişim yetkiniz yok");
+    return { cards: [] };
+  }
 
   const trimmed = query.trim();
   if (!trimmed) return { cards: [] };
@@ -38,11 +47,12 @@ export async function searchOrganization(organizationId: string, userId: string,
   // "QNT-42" yazıldıysa bu bir arama değil, bir ADRES: tam eşleşen kart
   // varsa tek sonuç olarak dönüyoruz. Metin araması aynı sorguda 0 sonuç
   // verirdi (başlıkta "QNT-42" geçmiyor), oysa kullanıcının kastettiği şey
-  // net. Kart bulunamazsa normal metin aramasına düşülüyor.
+  // net. Kart bulunamazsa (ya da erişilemeyen bir projedeyse) normal metin
+  // aramasına düşülüyor.
   const anahtar = parseCardKey(trimmed);
   if (anahtar) {
     const kart = await findCardByKey(organizationId, trimmed);
-    if (kart) {
+    if (kart && visibleProjectIds.has(kart.column.project.id)) {
       return {
         cards: [
           {
@@ -78,6 +88,7 @@ export async function searchOrganization(organizationId: string, userId: string,
     JOIN "Column" col ON col.id = c."columnId"
     JOIN "Project" p ON p.id = col."projectId"
     WHERE p."organizationId" = ${organizationId}
+      AND p.id IN (${Prisma.join([...visibleProjectIds])})
       AND (
         unaccent(c.title) ILIKE unaccent(${pattern})
         OR unaccent(COALESCE(c.description, '')) ILIKE unaccent(${pattern})

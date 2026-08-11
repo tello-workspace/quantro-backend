@@ -1,25 +1,16 @@
 import { prisma } from "@/lib/prisma";
-import { NotFoundError, ForbiddenError } from "@/utils/errors";
+import { checkProjectAccess } from "@/services/access-control.service";
 
 // Yol haritasi panodan FARKLI bir veri sekli istiyor: pano bagimliliklari ve
 // epic hiyerarsisini tasimiyor (kart acilinca ayrica cekiliyor), yol haritasi
 // ise ikisini de cizmek zorunda. Panoya bu alanlari eklemek her pano
 // yuklemesinde odenen bir maliyet olurdu, o yuzden ayri bir uc nokta.
 
-async function checkProjectAccess(projectId: string, userId: string) {
-  const project = await prisma.project.findFirst({
-    where: { id: projectId, organization: { members: { some: { userId } } } },
-    select: { id: true, name: true },
-  });
-  if (project) return project;
-
-  const exists = await prisma.project.findUnique({ where: { id: projectId }, select: { id: true } });
-  if (!exists) throw new NotFoundError("Proje");
-  throw new ForbiddenError("Bu projeye erişim yetkiniz yok");
-}
-
 export async function getProjectRoadmap(projectId: string, userId: string) {
-  const project = await checkProjectAccess(projectId, userId);
+  const [, project] = await Promise.all([
+    checkProjectAccess(projectId, userId),
+    prisma.project.findUniqueOrThrow({ where: { id: projectId }, select: { name: true } }),
+  ]);
 
   const cards = await prisma.card.findMany({
     where: {

@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
-import { NotFoundError, ForbiddenError } from "@/utils/errors";
 import { supabaseAdmin, ATTACHMENTS_BUCKET } from "@/lib/supabaseAdmin";
+import { checkProjectAccess } from "@/services/access-control.service";
 
 // Kapak gorselleri icin imzali URL. Depolama yapilandirilmamissa veya
 // imzalama basarisiz olursa bos harita doner: kapak gorseli bir suslemedir,
@@ -31,43 +31,18 @@ async function imzaliKapakUrlleri(yollar: string[]): Promise<Map<string, string>
   return harita;
 }
 
-// Proje + uyelik tek sorguda: onceden proje bir sorgu, uyelik ayri bir
-// sorgu ile cekiliyordu (iki gidis-donus). Iliski uzerinden filtreleyerek
-// ikisini birlestiriyoruz; proje yok mu yoksa uye degil mi ayrimi icin
-// yalnizca hata yolunda ikinci sorguyu atiyoruz.
-async function checkProjectAccess(projectId: string, userId: string) {
-  const project = await prisma.project.findFirst({
-    where: { id: projectId, organization: { members: { some: { userId } } } },
-    select: {
-      key: true,
-      estimateUnit: true,
-      organization: { select: { members: { where: { userId }, select: { role: true } } } },
-    },
-  });
-
-  if (project) {
-    return {
-      role: project.organization.members[0].role,
-      projectKey: project.key,
-      estimateUnit: project.estimateUnit,
-    };
-  }
-
-  const exists = await prisma.project.findUnique({
-    where: { id: projectId },
-    select: { id: true },
-  });
-  if (!exists) throw new NotFoundError("Proje");
-  throw new ForbiddenError("Bu projeye erişim yetkiniz yok");
-}
-
 export async function getBoard(projectId: string, userId: string) {
   // Uzak veritabaninda her sorgu ~140ms. Erisim kontrolu pano sorgusundan
   // once sirayla beklenirse bu bedel iki kez daha odeniyor; ikisini paralel
   // baslatip yetki hatasini yine de veriyi donmeden firlatiyoruz.
   //
-  const [access, columns] = await Promise.all([
+  // checkProjectAccess (access-control.service) gorunurluk/GUEST kuralini
+  // uyguluyor; key/estimateUnit sadece board'un kendi ihtiyaci oldugu icin
+  // ayri, hafif bir sorguyla (tek select) paralel cekiliyor - erisim
+  // kontrolunu genel amacli tutmak icin buraya tasimadik.
+  const [access, project, columns] = await Promise.all([
     checkProjectAccess(projectId, userId),
+    prisma.project.findUniqueOrThrow({ where: { id: projectId }, select: { key: true, estimateUnit: true } }),
     prisma.column.findMany({
       where: { projectId },
       orderBy: { position: "asc" },
@@ -164,7 +139,7 @@ export async function getBoard(projectId: string, userId: string) {
     columns: boardColumns,
     tasks,
     myRole: access.role,
-    projectKey: access.projectKey,
-    estimateUnit: access.estimateUnit,
+    projectKey: project.key,
+    estimateUnit: project.estimateUnit,
   };
 }

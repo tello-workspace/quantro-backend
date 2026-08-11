@@ -16,5 +16,15 @@ export const updateProjectSchema = z.object({
   estimateUnit: z.enum(["POINTS", "HOURS"]).optional(),
 });
 
+export const updateVisibilitySchema = z.object({
+  visibility: z.enum(["ORG", "TEAM", "PRIVATE"]),
+});
+
+export const addProjectMemberSchema = z.object({
+  userId: z.string().min(1, "Kullanıcı zorunludur"),
+});
+
 export type CreateProjectInput = z.infer<typeof createProjectSchema>;
 export type UpdateProjectInput = z.infer<typeof updateProjectSchema>;
+export type UpdateVisibilityInput = z.infer<typeof updateVisibilitySchema>;
+export type AddProjectMemberInput = z.infer<typeof addProjectMemberSchema>;

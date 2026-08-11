@@ -2,6 +2,7 @@ import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
 import { NotFoundError, ForbiddenError, AppError } from "@/utils/errors";
 import { supabaseAdmin, ATTACHMENTS_BUCKET, storageKeyHint } from "@/lib/supabaseAdmin";
+import { checkCardAccess } from "@/services/access-control.service";
 import { broadcastToProject, SocketEvents } from "@/server/socket";
 import {
   ALLOWED_MIME_TYPES,
@@ -34,26 +35,6 @@ function extensionForMime(mimeType: string): string {
   return EXTENSION_BY_MIME[mimeType] ?? "bin";
 }
 
-// Kartın kolonuna → projesine → organizasyonuna erişim kontrolü (comment.service.ts ile ayni desen)
-async function checkCardAccess(cardId: string, userId: string) {
-  const card = await prisma.card.findUnique({
-    where: { id: cardId },
-    select: { column: { select: { projectId: true, project: { select: { organizationId: true } } } } },
-  });
-  if (!card) throw new NotFoundError("Kart");
-
-  const member = await prisma.organizationMember.findUnique({
-    where: {
-      organizationId_userId: {
-        organizationId: card.column.project.organizationId,
-        userId,
-      },
-    },
-  });
-  if (!member) throw new ForbiddenError("Bu karta erişim yetkiniz yok");
-
-  return { projectId: card.column.projectId, role: member.role };
-}
 
 export async function listAttachments(cardId: string, userId: string) {
   await checkCardAccess(cardId, userId);

@@ -12,12 +12,13 @@ export const updateOrganizationSchema = z.object({
 
 export const addMemberSchema = z.object({
   email: z.string().email("Geçerli bir email adresi giriniz"),
-  role: z.enum(["ADMIN", "MEMBER"]).optional(),
+  // GUEST: yalnizca davet edildigi proje(ler)i gorecek kisi (musteri/stajyer).
+  role: z.enum(["ADMIN", "MEMBER", "GUEST"]).optional(),
 });
 
 export const updateMemberRoleSchema = z.object({
   userId: z.string(),
-  role: z.enum(["ADMIN", "MEMBER"]),
+  role: z.enum(["ADMIN", "MEMBER", "GUEST"]),
 });
 
 export type CreateOrganizationInput = z.infer<typeof createOrganizationSchema>;
