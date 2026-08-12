@@ -7,6 +7,7 @@ import {
   ALLOWED_MIME_TYPES,
   MAX_DOCUMENTS_PER_PROJECT,
   MAX_FILE_SIZE,
+  TEXT_EXTRACTABLE_MIME_TYPES,
 } from "@/lib/document-policy";
 import { extractText } from "@/services/document-text-extraction";
 
@@ -40,16 +41,27 @@ export async function listDocuments(projectId: string, userId: string) {
     where: { projectId },
     orderBy: { createdAt: "desc" },
     include: { uploader: { select: { id: true, name: true } } },
-    omit: { extractedText: true },
   });
+
+  // extractedText'in kendisini listeye tasimadan, MCP'nin bu belgeyi
+  // okuyup okuyamayacagini (yeniden deneme oncesi tahmini) UI'da
+  // gosterebilmek icin bir durum ozeti cikar.
+  const withStatus = documents.map(({ extractedText, ...d }) => ({
+    ...d,
+    textStatus: extractedText
+      ? ("ok" as const)
+      : TEXT_EXTRACTABLE_MIME_TYPES.has(d.mimeType)
+        ? ("pending" as const)
+        : ("unsupported" as const),
+  }));
 
   const storage = supabaseAdmin;
   if (!storage) {
-    return documents.map((d) => ({ ...d, downloadUrl: null }));
+    return withStatus.map((d) => ({ ...d, downloadUrl: null }));
   }
 
   return Promise.all(
-    documents.map(async (d) => {
+    withStatus.map(async (d) => {
       const { data } = await storage.storage
         .from(PROJECT_DOCUMENTS_BUCKET)
         .createSignedUrl(d.storagePath, SIGNED_URL_TTL_SECONDS);
@@ -108,9 +120,10 @@ export async function uploadDocument(
 
   // Metin cikarimi yukleme aninda bir kez yapilir ve saklanir - MCP okuma
   // istekleri boylece her seferinde docx/pdf parse etmez. Basarisiz olursa
-  // (desteklenmeyen tur, bozuk dosya) yukleme yine de tamamlanir; sadece
-  // extractedText null kalir.
-  const extractedText = await extractText(file.buffer, file.type);
+  // (desteklenmeyen tur, bozuk dosya, taranmis PDF) yukleme yine de
+  // tamamlanir; extractedText null kalir ve getDocumentText() bir sonraki
+  // okumada tekrar dener (bkz. asagisi).
+  const { text: extractedText } = await extractText(file.buffer, file.type);
 
   const document = await prisma.projectDocument.create({
     data: {
@@ -149,23 +162,75 @@ export async function deleteDocument(projectId: string, documentId: string, user
 }
 
 // MCP server'in read_document araci bunu cagirir. extractedText null ise
-// (desteklenmeyen dosya turu ya da cikarim basarisiz oldu) net bir mesaj
-// doner - sessizce bos metin donmez.
+// (desteklenmeyen dosya turu, cikarim hatasi ya da taranmis/bos belge) net
+// bir "reason"/"detail" doner - sessizce bos metin donmez. Ayrica her zaman
+// bir indirme linki eklenir ki metin cikarilamasa bile ham dosyaya erisim
+// mumkun olsun.
+//
+// Desteklenen bir turde (pdf/docx/txt/csv) extractedText null ise -
+// yukleme aninda gecici bir hata olmus olabilir - burada BIR KEZ daha
+// denenir; basarili olursa sonuc DB'ye yazilip bir dahaki okuma icin
+// saklanir.
 export async function getDocumentText(projectId: string, documentId: string, userId: string) {
   await checkProjectAccess(projectId, userId);
 
   const document = await prisma.projectDocument.findUnique({
     where: { id: documentId },
-    select: { id: true, projectId: true, fileName: true, mimeType: true, extractedText: true },
+    select: {
+      id: true,
+      projectId: true,
+      fileName: true,
+      mimeType: true,
+      extractedText: true,
+      storagePath: true,
+    },
   });
   if (!document || document.projectId !== projectId) {
     throw new NotFoundError("Belge");
   }
 
+  let text = document.extractedText;
+  let reason: "ok" | "unsupported" | "empty" | "error" = text ? "ok" : "unsupported";
+  let detail: string | undefined;
+
+  if (!text && TEXT_EXTRACTABLE_MIME_TYPES.has(document.mimeType) && supabaseAdmin) {
+    const { data: fileData, error: downloadError } = await supabaseAdmin.storage
+      .from(PROJECT_DOCUMENTS_BUCKET)
+      .download(document.storagePath);
+
+    if (downloadError) {
+      reason = "error";
+      detail = `Dosya depodan okunamadi: ${downloadError.message}`;
+    } else {
+      const buffer = Buffer.from(await fileData.arrayBuffer());
+      const retry = await extractText(buffer, document.mimeType);
+      reason = retry.reason;
+      detail = retry.detail;
+      if (retry.text) {
+        text = retry.text;
+        await prisma.projectDocument.update({
+          where: { id: document.id },
+          data: { extractedText: retry.text },
+        });
+      }
+    }
+  }
+
+  const downloadUrl = supabaseAdmin
+    ? (
+        await supabaseAdmin.storage
+          .from(PROJECT_DOCUMENTS_BUCKET)
+          .createSignedUrl(document.storagePath, SIGNED_URL_TTL_SECONDS)
+      ).data?.signedUrl ?? null
+    : null;
+
   return {
     id: document.id,
     fileName: document.fileName,
     mimeType: document.mimeType,
-    text: document.extractedText,
+    text,
+    reason: text ? "ok" : reason,
+    detail: text ? undefined : detail,
+    downloadUrl,
   };
 }
