@@ -1,0 +1,20 @@
+name: Daily Digest
+
+# nightly-scan.yml ile ayni gerekce: Render Free plan uykuya dalabiliyor,
+# bu is /api/digest'i disaridan tetikleyerek in-process cron'un (src/lib/cron.ts)
+# kacirdigi gunleri telafi eder. runDailyDigest User.lastDigestSentAt ile
+# GUNLUK idempotent oldugu icin iki tetikleyicinin ayni gun calismasi
+# gercek e-postayi iki kez gondermez.
+on:
+  schedule:
+    - cron: "0 8 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  trigger-digest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: /api/digest tetikle
+        run: |
+          curl -fsS -X POST "https://quantro-backend-1.onrender.com/api/digest" \
+            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}"

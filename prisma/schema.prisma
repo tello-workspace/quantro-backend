@@ -192,6 +192,16 @@ model User {
   // gerekmiyor, profil fotografi zaten herkese acik gosterilecek bir sey.
   avatarUrl       String?
   language        String   @default("tr")
+  // Sabah 08:00 gunluk ozet e-postasi (yaklasan teslim tarihleri + yeni
+  // atanan kartlar + bekleyen talepler) - varsayilan acik, kart kendi
+  // notunda bunu daha degerli buluyor ("tarih koyup kimsenin gormemesi
+  // ise yaramiyor").
+  dailyDigestEnabled Boolean   @default(true)
+  // Ayni gun icinde IKI KEZ gonderilmesini onler: hem in-process cron hem
+  // GitHub Actions (Render uyku modu icin) ayni saatte tetikleyebiliyor
+  // (bkz. cron.ts). Gonderilince bugunun tarihine guncellenir, sonraki
+  // cagri ayni gun icin atlar.
+  lastDigestSentAt   DateTime?
   // User-specific AI configurations
   aiProvider      String?
   aiApiKey        String?
@@ -338,10 +348,21 @@ model AutomationRule {
   conditionPriority Priority?
   conditionLabelId  String?
 
-  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  createdBy User    @relation(fields: [createdById], references: [id])
+  // Kart detayindan "bunu her hafta tekrarla" ile olusturulan SCHEDULED+
+  // CREATE_CARD kurallarini kaynak karta baglar - "bu kart tekrarlaniyor mu"
+  // sorusunu basligin degismis olmasina karsi guvenilir sekilde cevaplar
+  // (actionMessage'a gore eslestirmek kart yeniden adlandirilinca kirilirdi).
+  // Kaynak kart silinirse kural CALISMAYA DEVAM eder (Butler'daki gibi tekrar
+  // ayri bir kavram, tek bir orneginin silinmesiyle durmaz) - sadece referans
+  // null'lanir.
+  sourceCardId String?
+
+  project    Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy  User    @relation(fields: [createdById], references: [id])
+  sourceCard Card?   @relation("AutomationSourceCard", fields: [sourceCardId], references: [id], onDelete: SetNull)
 
   @@index([projectId, trigger])
+  @@index([sourceCardId])
 }
 
 // Organizasyon basina tek sohbet odasi: uyeler ayni akista mesajlasir.
@@ -676,6 +697,7 @@ model Card {
   customFieldValues CardCustomFieldValue[]
   watchers          CardWatcher[]
   timeLogs          TimeLog[]
+  recurrenceRules   AutomationRule[]       @relation("AutomationSourceCard")
 
   @@index([columnId])
   @@index([lastActivityAt]) // cron taraması hızlı olsun

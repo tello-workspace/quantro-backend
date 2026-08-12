@@ -49,6 +49,47 @@ export async function sendVerificationEmail(to: string, verifyUrl: string) {
   });
 }
 
+export interface DigestData {
+  dueSoon: { title: string; dueDate: string }[];
+  newlyAssigned: { title: string }[];
+  pendingRequests: number;
+}
+
+function digestSectionHtml(title: string, items: string[]): string {
+  if (items.length === 0) return "";
+  return `
+    <h3 style="margin-bottom:6px;">${title}</h3>
+    <ul style="margin-top:0;padding-left:20px;">
+      ${items.map((i) => `<li>${i}</li>`).join("")}
+    </ul>
+  `;
+}
+
+export async function sendDailyDigestEmail(to: string, appUrl: string, data: DigestData) {
+  const dueSoonItems = data.dueSoon.map(
+    (c) => `${c.title} — ${new Date(c.dueDate).toLocaleDateString("tr-TR")}`,
+  );
+  const assignedItems = data.newlyAssigned.map((c) => c.title);
+
+  const html = `
+    <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto;">
+      <h2>Günlük Özet</h2>
+      ${digestSectionHtml("⏰ Yaklaşan teslim tarihleri", dueSoonItems)}
+      ${digestSectionHtml("📋 Sana yeni atanan kartlar", assignedItems)}
+      ${data.pendingRequests > 0 ? `<p>🔔 ${data.pendingRequests} bekleyen değişiklik talebi var.</p>` : ""}
+      <p><a href="${appUrl}" style="display:inline-block;padding:10px 20px;background:#4f46e5;color:#fff;text-decoration:none;border-radius:6px;">Panoyu Aç</a></p>
+      <p style="color:#666;font-size:13px;">Bu özeti almak istemiyorsan profil ayarlarından kapatabilirsin.</p>
+    </div>
+  `;
+
+  if (!resend) {
+    console.log(`[EMAIL] RESEND_API_KEY tanimli degil, gunluk ozet (${to}) gonderilmedi (konsola dusuyor).`);
+    return;
+  }
+
+  await resend.emails.send({ from: FROM, to, subject: "Quantro - Günlük Özetin", html });
+}
+
 const MX_LOOKUP_TIMEOUT_MS = 5000;
 
 // Register anindaki ucuz bir on-kontrol: domain gercekten mail alabiliyor mu?

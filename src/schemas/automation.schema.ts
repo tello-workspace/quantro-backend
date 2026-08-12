@@ -26,6 +26,8 @@ export const createAutomationRuleSchema = z
     // Kosul filtreleri: null/undefined = filtre yok
     conditionPriority: z.enum(["LOW", "MEDIUM", "HIGH", "URGENT"]).nullable().optional(),
     conditionLabelId: z.string().nullable().optional(),
+    // Kart detayindan "bunu tekrarla" ile olusturulduysa kaynak kart id'si
+    sourceCardId: z.string().nullable().optional(),
   })
   .refine(
     (v) => v.trigger !== "CARD_MOVED_TO_COLUMN" || !!v.triggerColumnId,

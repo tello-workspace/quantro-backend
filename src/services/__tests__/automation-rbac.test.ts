@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { createWorkspace, cleanup } from "@/test/fixtures";
+import { createWorkspace, createCard, cleanup } from "@/test/fixtures";
 import * as automationService from "@/services/automation.service";
 import { ForbiddenError, NotFoundError } from "@/utils/errors";
 
@@ -105,5 +105,84 @@ describe("automation.service RBAC", () => {
     await expect(automationService.listAutomationRules("olmayan-proje", member.id)).rejects.toThrow(
       NotFoundError,
     );
+  });
+});
+
+describe("automation.service - kart tekrarı (sourceCardId)", () => {
+  const orgIds: string[] = [];
+  const userIds: string[] = [];
+
+  afterEach(async () => {
+    await cleanup({ orgIds, userIds });
+    orgIds.length = 0;
+    userIds.length = 0;
+  });
+
+  it("tekrarlanan kart yoksa null döner", async () => {
+    const { admin, org, project, todo } = await createWorkspace();
+    orgIds.push(org.id);
+    userIds.push(admin.id);
+
+    const kart = await createCard(todo.id, admin.id, "Tekrarsız kart");
+    const kural = await automationService.getCardRecurrence(kart.id, admin.id);
+    expect(kural).toBeNull();
+  });
+
+  it("sourceCardId ile oluşturulan kural o kart için döner", async () => {
+    const { admin, org, project, todo } = await createWorkspace();
+    orgIds.push(org.id);
+    userIds.push(admin.id);
+
+    const kart = await createCard(todo.id, admin.id, "Haftalık rapor");
+    await automationService.createAutomationRule(
+      project.id,
+      {
+        name: "Tekrar: Haftalık rapor",
+        trigger: "SCHEDULED",
+        actionType: "CREATE_CARD",
+        actionColumnId: todo.id,
+        actionMessage: "Haftalık rapor",
+        scheduleDayOfWeek: 1,
+        sourceCardId: kart.id,
+      },
+      admin.id,
+    );
+
+    const kural = await automationService.getCardRecurrence(kart.id, admin.id);
+    expect(kural).not.toBeNull();
+    expect(kural?.scheduleDayOfWeek).toBe(1);
+  });
+
+  it("başka kartın kuralını döndürmez", async () => {
+    const { admin, org, project, todo } = await createWorkspace();
+    orgIds.push(org.id);
+    userIds.push(admin.id);
+
+    const kartA = await createCard(todo.id, admin.id, "A");
+    const kartB = await createCard(todo.id, admin.id, "B");
+    await automationService.createAutomationRule(
+      project.id,
+      {
+        name: "Tekrar: A",
+        trigger: "SCHEDULED",
+        actionType: "CREATE_CARD",
+        actionColumnId: todo.id,
+        actionMessage: "A",
+        sourceCardId: kartA.id,
+      },
+      admin.id,
+    );
+
+    const kural = await automationService.getCardRecurrence(kartB.id, admin.id);
+    expect(kural).toBeNull();
+  });
+
+  it("üyesi olmadığı projedeki kartın tekrar durumunu göremez", async () => {
+    const { admin, outsider, org, project, todo } = await createWorkspace();
+    orgIds.push(org.id);
+    userIds.push(admin.id, outsider.id);
+
+    const kart = await createCard(todo.id, admin.id, "Gizli kart");
+    await expect(automationService.getCardRecurrence(kart.id, outsider.id)).rejects.toThrow(ForbiddenError);
   });
 });

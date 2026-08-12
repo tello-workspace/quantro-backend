@@ -42,8 +42,27 @@ export async function createAutomationRule(projectId: string, input: CreateAutom
       dueSoonDays: input.dueSoonDays,
       conditionPriority: input.conditionPriority,
       conditionLabelId: input.conditionLabelId,
+      sourceCardId: input.sourceCardId,
       createdById: userId,
     },
+  });
+}
+
+// Bir kartin "tekrarlaniyor mu" durumunu getirir - kart detayinda tekrar
+// kontrolunun mevcut aktif kurali gostermesi icin. Goruntuleme icin proje
+// uyeligi yeterli (yonetim/silme hala checkProjectAdmin'e tabi, mevcut
+// updateAutomationRule/deleteAutomationRule uzerinden).
+export async function getCardRecurrence(cardId: string, userId: string) {
+  const card = await prisma.card.findUnique({
+    where: { id: cardId },
+    select: { column: { select: { projectId: true } } },
+  });
+  if (!card) throw new NotFoundError("Kart");
+  await checkProjectAccess(card.column.projectId, userId);
+
+  return prisma.automationRule.findFirst({
+    where: { sourceCardId: cardId, trigger: "SCHEDULED", actionType: "CREATE_CARD" },
+    orderBy: { createdAt: "desc" },
   });
 }
 

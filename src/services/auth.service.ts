@@ -258,6 +258,7 @@ const PROFILE_SELECT = {
   aiApiKey: true, // sadece varlik kontrolu icin secilir, cevapta hicbir zaman geri donmez
   aiBaseUrl: true,
   aiModel: true,
+  dailyDigestEnabled: true,
 } as const;
 
 // aiApiKey sifreli tutulur (bkz. utils/crypto.ts) ve API'den asla geri
