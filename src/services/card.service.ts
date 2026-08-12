@@ -359,7 +359,23 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
   let newColumnName: string | undefined;
   let transitionWarnings: string[] | undefined;
   if (isColumnChange && input.columnId) {
-    const destAccess = await checkColumnAccess(input.columnId, userId);
+    // destAccess ve destColumn birbirinden bagimsiz - paralel calistirmak
+    // (ayri ayri sirali beklemek yerine) toplu tasimada kart basina eklenen
+    // gecikmeyi yariya indiriyor; bulk-card.service.ts bu fonksiyonu N kart
+    // icin SIRAYLA cagiriyor, kart basina kucuk bir kazanc N ile carpiliyor.
+    const [destAccess, destColumn] = await Promise.all([
+      checkColumnAccess(input.columnId, userId),
+      prisma.column.findUnique({
+        where: { id: input.columnId },
+        select: {
+          transitionMode: true,
+          requireAssignee: true,
+          requireChecklistComplete: true,
+          requireDescription: true,
+          requireNoOpenBlockers: true,
+        },
+      }),
+    ]);
     newColumnName = destAccess.columnName;
 
     // Bu genel PATCH ucu her zaman AYNI proje icinde tasima icin tasarlandi
@@ -375,16 +391,6 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
       );
     }
 
-    const destColumn = await prisma.column.findUnique({
-      where: { id: input.columnId },
-      select: {
-        transitionMode: true,
-        requireAssignee: true,
-        requireChecklistComplete: true,
-        requireDescription: true,
-        requireNoOpenBlockers: true,
-      },
-    });
     if (destColumn && destColumn.transitionMode !== "OFF") {
       const ihlaller = await checkColumnTransitionRules(cardId, destColumn);
       if (ihlaller.length > 0) {

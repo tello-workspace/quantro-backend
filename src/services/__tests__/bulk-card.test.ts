@@ -44,7 +44,12 @@ describe("bulk-card.service", () => {
       select: { columnId: true },
     });
     expect(tasinmis.every((k) => k.columnId === done.id)).toBe(true);
-  });
+    // Tasima her kart icin ~8 sirali DB gidis-donusu tetikliyor (activity log,
+    // watcher bildirimi, otomasyon, gecis kurali kontrolu...) - varsayilan
+    // 30s, uzak paylasimli veritabaninin normal gecikmesinde 3 kartlik bir
+    // tasima icin yetersiz kalabiliyor. Bu, dogruluk degil gecikme sinirini
+    // gevsetir.
+  }, 60000);
 
   it("verilen pozisyonlar korunur - surukle-birak sirasi bozulmaz", async () => {
     const { admin, org, project, todo, done } = await createWorkspace();
@@ -75,7 +80,8 @@ describe("bulk-card.service", () => {
 
     expect(sirali.map((k) => k.id)).toEqual([a.id, b.id, c.id]);
     expect(sirali.map((k) => k.position)).toEqual([10, 20, 30]);
-  });
+    // Yukaridaki testteki ayni gecikme notu gecerli.
+  }, 60000);
 
   it("pozisyon verilmezse kartlar sutunun sonuna eklenir", async () => {
     const { admin, org, project, todo, done } = await createWorkspace();
