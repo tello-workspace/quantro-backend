@@ -87,6 +87,9 @@ export interface ServerSocketEvents {
   [SocketEvents.USER_ONLINE]: (userId: string) => void;
   [SocketEvents.USER_OFFLINE]: (userId: string) => void;
   [SocketEvents.USER_TYPING]: (data: TypingPayload) => void;
+
+  // Sirket ici mailbox
+  [SocketEvents.MAIL_NEW]: (data: { mailId: string; subject: string; senderName: string }) => void;
 }
 
 export enum SocketEvents {
@@ -167,6 +170,9 @@ export enum SocketEvents {
   USER_ONLINE = "presence:online",
   USER_OFFLINE = "presence:offline",
   USER_TYPING = "presence:typing",
+
+  // Sirket ici mailbox
+  MAIL_NEW = "mail:new",
 }
 
 // Payload types

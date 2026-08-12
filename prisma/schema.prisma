@@ -90,6 +90,7 @@ enum NotificationType {
   MENTIONED // bir yorumda @isim ile etiketlendin
   AUTOMATION // bir otomasyon kurali seni bilgilendirdi
   WATCHED_CARD_ACTIVITY // izledigin bir kartta yorum/tasima oldu
+  MAIL_RECEIVED // sirket ici mailbox'a yeni mesaj geldi
   // NOT: Bu deger bir kez kaldirilip (c9aef48) geri eklendi. Eski surumdeki
   // "enum degeri veritabaninda birakildi" notu artik gecersiz - 04a2f4c
   // (20260804095500) enum'u USING ile yeniden yaratarak degeri gercekten
@@ -229,6 +230,8 @@ model User {
   commentReactions        CommentReaction[]
   timeLogs                TimeLog[]
   projectMemberships      ProjectMember[]
+  sentMails               Mail[]                   @relation("MailSender")
+  receivedMails           MailRecipient[]           @relation("MailRecipientUser")
 }
 
 // ---------- ORGANIZATION ----------
@@ -248,6 +251,7 @@ model Organization {
   changeRequests   ChangeRequest[]
   badges           Badge[]
   projectTemplates ProjectTemplate[]
+  mails            Mail[]
 }
 
 // Proje sablonu: yeni proje acarken hazir kolon+etiket setiyle baslamak
@@ -1014,4 +1018,63 @@ model UserNotificationPref {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@id([userId, type])
+}
+
+// ---------- SIRKET ICI MAILBOX ----------
+// Kapali devre (internal) mesajlasma: yalnizca ayni organizasyonun uyeleri
+// arasinda calisir, disaridan hicbir sey giremez. Alici listesi GONDERIM
+// ANINDA sabitlenir (MailRecipient satirlari olusturulur) - grup secimi
+// ("Tum organizasyon", "Proje X Ekibi") dinamik bir referans DEGIL, o anki
+// uyelerin bir anlik goruntusu. Aksi halde biri projeden ayrilinca eski bir
+// mailin "kime gitmisti" bilgisi sessizce degisirdi.
+model Mail {
+  id             String    @id @default(cuid())
+  organizationId String
+  senderId       String
+  subject        String
+  body           String
+  // true iken hicbir alicinin gelen kutusunda GORUNMEZ ve bildirim gitmez -
+  // MailRecipient satirlari onceden olusturulmus olabilir (taslak "kime
+  // gidecek" bilgisini tutar), gonderilince isDraft false olur.
+  isDraft        Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+  sentAt         DateTime?
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  sender       User             @relation("MailSender", fields: [senderId], references: [id], onDelete: Cascade)
+  recipients   MailRecipient[]
+  attachments  MailAttachment[]
+
+  @@index([organizationId, senderId, isDraft, createdAt])
+}
+
+model MailRecipient {
+  mailId    String
+  userId    String
+  read      Boolean   @default(false)
+  readAt    DateTime?
+  // Alicinin KENDI gelen kutusundan silmesi - gonderenin Gonderilenler'ini
+  // ya da diger alicilarin kutusunu etkilemez, CardWatcher'daki "kisisel
+  // abonelik" mantiginin ayni izdüşümü.
+  deletedAt DateTime?
+
+  mail Mail @relation(fields: [mailId], references: [id], onDelete: Cascade)
+  user User @relation("MailRecipientUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([mailId, userId])
+  @@index([userId, read, deletedAt])
+}
+
+model MailAttachment {
+  id          String   @id @default(cuid())
+  mailId      String
+  fileName    String
+  storagePath String
+  fileSize    Int
+  mimeType    String
+  createdAt   DateTime @default(now())
+
+  mail Mail @relation(fields: [mailId], references: [id], onDelete: Cascade)
+
+  @@index([mailId])
 }
