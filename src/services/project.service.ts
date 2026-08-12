@@ -8,11 +8,12 @@ import {
   suggestProjectKey,
 } from "@/services/card-key.service";
 import { checkProjectAccess, filterVisibleProjects, assertCanManageProjectAccess } from "@/services/access-control.service";
+import { resolveTemplate } from "@/services/project-template.service";
 import type { CreateProjectInput, UpdateProjectInput } from "@/schemas/project.schema";
 import type { ProjectVisibility } from "@prisma/client";
 
 // Organization üyeliğini kontrol et
-async function checkMembership(organizationId: string, userId: string) {
+export async function checkMembership(organizationId: string, userId: string) {
   const member = await prisma.organizationMember.findUnique({
     where: { organizationId_userId: { organizationId, userId } },
   });
@@ -38,6 +39,15 @@ export async function createProject(organizationId: string, input: CreateProject
     : suggestProjectKey(input.name);
   const key = await findAvailableProjectKey(organizationId, istenenKey);
 
+  // Sablon secilmemisse eski sabit 4 kolona dus - mevcut davranis degismiyor.
+  const sablon = await resolveTemplate(input.templateId, organizationId);
+  const kolonlar = sablon?.columns ?? [
+    { name: "To Do", position: 1 },
+    { name: "In Progress", position: 2 },
+    { name: "Testing", position: 3 },
+    { name: "Done", position: 4, isDone: true },
+  ];
+
   const project = await prisma.project.create({
     data: {
       name: input.name,
@@ -45,14 +55,8 @@ export async function createProject(organizationId: string, input: CreateProject
       key,
       organizationId,
       ownerId: userId,
-      columns: {
-        create: [
-          { name: "To Do", position: 1 },
-          { name: "In Progress", position: 2 },
-          { name: "Testing", position: 3 },
-          { name: "Done", position: 4, isDone: true },
-        ],
-      },
+      columns: { create: kolonlar },
+      labels: sablon?.labels && sablon.labels.length > 0 ? { create: sablon.labels } : undefined,
     },
     include: {
       columns: { orderBy: { position: "asc" } },

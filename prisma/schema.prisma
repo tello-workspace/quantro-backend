@@ -219,6 +219,7 @@ model User {
   uploadedAttachments     CardAttachment[]
   createdAutomationRules  AutomationRule[]
   createdCardTemplates    CardTemplate[]
+  createdProjectTemplates ProjectTemplate[]
   watchedCards            CardWatcher[]
   uploadedProjectDocuments ProjectDocument[]
   archivedCards           Card[]                   @relation("CardArchivedBy")
@@ -238,13 +239,37 @@ model Organization {
   ownerId     String
   createdAt   DateTime @default(now())
 
-  owner          User                     @relation("OrganizationOwner", fields: [ownerId], references: [id])
-  members        OrganizationMember[]
-  projects       Project[]
-  invitations    OrganizationInvitation[]
-  chatMessages   ChatMessage[]
-  changeRequests ChangeRequest[]
-  badges         Badge[]
+  owner            User                     @relation("OrganizationOwner", fields: [ownerId], references: [id])
+  members          OrganizationMember[]
+  projects         Project[]
+  invitations      OrganizationInvitation[]
+  chatMessages     ChatMessage[]
+  changeRequests   ChangeRequest[]
+  badges           Badge[]
+  projectTemplates ProjectTemplate[]
+}
+
+// Proje sablonu: yeni proje acarken hazir kolon+etiket setiyle baslamak
+// icin. Org-scoped (proje HENUZ yokken secildigi icin proje-scoped olamaz -
+// bkz. CardTemplate, o proje-scoped). Otomasyon kurallari ve ozel alanlar
+// BILEREK disarida - trigger/action semasi karmasik, kartin kendisi de
+// "LOW oncelik, kazanc sinirli" diyor; kolon+etiket asil sikinti (elle
+// kurulan sey) buydu.
+model ProjectTemplate {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  // [{ name, position, wipLimit?, isDone? }]
+  columns        Json
+  // [{ name, color }]
+  labels         Json     @default("[]")
+  createdById    String
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy    User         @relation(fields: [createdById], references: [id])
+
+  @@index([organizationId])
 }
 
 // Uyenin gonderdigi, admin onayi bekleyen degisiklik talebi.

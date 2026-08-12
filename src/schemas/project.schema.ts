@@ -6,6 +6,9 @@ export const createProjectSchema = z.object({
   // Kart anahtarı öneki ("QNT" -> QNT-42). Verilmezse proje adından
   // üretilir; doluysa sonuna sayı eklenerek boş olan ilk anahtar alınır.
   key: z.string().min(2).max(5).optional(),
+  // "builtin:software" gibi hazir bir sablon veya ProjectTemplate.id -
+  // verilmezse eski sabit 4 kolon davranisina dusulur.
+  templateId: z.string().optional(),
 });
 
 export const updateProjectSchema = z.object({
@@ -24,7 +27,12 @@ export const addProjectMemberSchema = z.object({
   userId: z.string().min(1, "Kullanıcı zorunludur"),
 });
 
+export const saveAsTemplateSchema = z.object({
+  name: z.string().min(1, "Şablon adı zorunludur").max(100),
+});
+
 export type CreateProjectInput = z.infer<typeof createProjectSchema>;
+export type SaveAsTemplateInput = z.infer<typeof saveAsTemplateSchema>;
 export type UpdateProjectInput = z.infer<typeof updateProjectSchema>;
 export type UpdateVisibilityInput = z.infer<typeof updateVisibilitySchema>;
 export type AddProjectMemberInput = z.infer<typeof addProjectMemberSchema>;
