@@ -147,9 +147,9 @@ export async function getProjectInsights(projectId: string, userId: string) {
   };
 }
 
-// Activity tablosu hicbir serviste yazilmiyor (hep bos), o yuzden haftalik ozeti
-// Card tablosunun kendi zaman damgalarindan cikariyoruz - tam bir audit log degil
-// ama "bu hafta ne oldu" sorusuna yeterli bir yaklasik cevap verir.
+// Not: Activity artik doluyor (card/comment servisleri logActivity cagiriyor),
+// ama bu fonksiyon yine de Card tablosunun kendi zaman damgalarindan
+// hesapliyor - basit ve yeterli, degistirmeye gerek yok.
 export async function getWeeklySummary(projectId: string, userId: string) {
   await checkProjectAccess(projectId, userId);
 
@@ -202,8 +202,15 @@ export async function getWeeklySummary(projectId: string, userId: string) {
   };
 }
 
+// YEREL takvim gunune gore anahtar - eachDay de cursor'u YEREL Y/M/D ile
+// kuruyor (asagida). toISOString() (UTC) kullanilsaydi UTC+ bolgelerde yerel
+// gece yarisi bir onceki UTC gunune duserdi, eachDay'in urettigi gunlerle
+// toDayKey'in anahtari sessizce bir gun kayardi.
 function toDayKey(d: Date): string {
-  return d.toISOString().slice(0, 10);
+  const yil = d.getFullYear();
+  const ay = String(d.getMonth() + 1).padStart(2, "0");
+  const gun = String(d.getDate()).padStart(2, "0");
+  return `${yil}-${ay}-${gun}`;
 }
 
 function eachDay(start: Date, end: Date): Date[] {
@@ -215,4 +222,202 @@ function eachDay(start: Date, end: Date): Date[] {
     cursor.setDate(cursor.getDate() + 1);
   }
   return days;
+}
+
+function eachWeekStart(start: Date, end: Date): Date[] {
+  const weeks: Date[] = [];
+  const cursor = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+  const last = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+  while (cursor <= last) {
+    weeks.push(new Date(cursor));
+    cursor.setDate(cursor.getDate() + 7);
+  }
+  return weeks;
+}
+
+const CFD_DAYS_DEFAULT = 30;
+const CFD_DAYS_MIN = 7;
+const CFD_DAYS_MAX = 90;
+const OTHER_COLUMN_KEY = "__other__";
+
+export interface CumulativeFlowResult {
+  projectId: string;
+  days: number;
+  columns: { id: string; name: string }[];
+  series: { date: string; counts: Record<string, number> }[];
+  totalCards: number;
+  cardsWithMoveHistory: number;
+}
+
+/**
+ * Gercek (sutun bazli) kumulatif akis: her gun icin her sutundaki kart
+ * sayisi. Onceki deneme (bkz. commit 36e4ae6) sadece "olusturulan vs
+ * tamamlanan" iki bandini gosteriyordu ve "anlamli bulunmadi" diye geri
+ * alinmisti - bu, gercek darbogazi (hangi SÜTUN tikaniyor) gostermiyordu.
+ * Bu surum sutun sutun WIP'i zaman icinde takip ediyor.
+ *
+ * Kisit: CARD_MOVED aktivitesi sutun ADI tutuyor, id degil (schema'nin
+ * kendi ornegi: data: {"from":"To Do","to":"In Progress"}). Bir sutun
+ * yeniden adlandirilirsa o degisiklikten ONCEKI hareketler artik hicbir
+ * MEVCUT sutunla eslesmez - bunlar sessizce yutulmuyor, "Diğer" kovasina
+ * dusuyor ki toplam tutarli kalsin ve veri kaybi gorunur olsun.
+ */
+export async function getCumulativeFlow(
+  projectId: string,
+  userId: string,
+  days: number = CFD_DAYS_DEFAULT,
+): Promise<CumulativeFlowResult> {
+  await checkProjectAccess(projectId, userId);
+  const clampedDays = Math.min(Math.max(days, CFD_DAYS_MIN), CFD_DAYS_MAX);
+
+  const end = new Date();
+  const start = new Date(end.getTime() - (clampedDays - 1) * 24 * 60 * 60 * 1000);
+
+  const [columns, cards] = await Promise.all([
+    prisma.column.findMany({ where: { projectId }, orderBy: { position: "asc" }, select: { id: true, name: true } }),
+    prisma.card.findMany({
+      where: { column: { projectId }, isArchived: false },
+      select: { id: true, createdAt: true, columnId: true },
+    }),
+  ]);
+
+  const cardIds = cards.map((c) => c.id);
+  const moves =
+    cardIds.length > 0
+      ? await prisma.activity.findMany({
+          where: { projectId, cardId: { in: cardIds }, type: "CARD_MOVED" },
+          select: { cardId: true, createdAt: true, data: true },
+          orderBy: { createdAt: "asc" },
+        })
+      : [];
+
+  const movesByCard = new Map<string, { at: Date; from: string; to: string }[]>();
+  for (const m of moves) {
+    if (!m.cardId) continue;
+    const veri = m.data as { from?: string; to?: string } | null;
+    if (!veri?.from || !veri?.to) continue;
+    const liste = movesByCard.get(m.cardId) ?? [];
+    liste.push({ at: m.createdAt, from: veri.from, to: veri.to });
+    movesByCard.set(m.cardId, liste);
+  }
+
+  const columnIdByName = new Map(columns.map((c) => [c.name, c.id]));
+  const columnNameById = new Map(columns.map((c) => [c.id, c.name]));
+
+  function kolonAdiZamanNoktasinda(card: (typeof cards)[number], zaman: Date): string {
+    const hareketler = movesByCard.get(card.id) ?? [];
+    if (hareketler.length === 0 || zaman < hareketler[0].at) {
+      return hareketler.length > 0 ? hareketler[0].from : (columnNameById.get(card.columnId) ?? OTHER_COLUMN_KEY);
+    }
+    let sonuc = hareketler[0].to;
+    for (const hareket of hareketler) {
+      if (zaman >= hareket.at) sonuc = hareket.to;
+      else break;
+    }
+    return sonuc;
+  }
+
+  const gunler = eachDay(start, end);
+  const series = gunler.map((gun) => {
+    const gunSonu = new Date(gun.getFullYear(), gun.getMonth(), gun.getDate(), 23, 59, 59, 999);
+    const counts: Record<string, number> = {};
+    for (const col of columns) counts[col.id] = 0;
+    counts[OTHER_COLUMN_KEY] = 0;
+
+    for (const card of cards) {
+      if (card.createdAt > gunSonu) continue;
+      const adi = kolonAdiZamanNoktasinda(card, gunSonu);
+      const id = columnIdByName.get(adi) ?? OTHER_COLUMN_KEY;
+      counts[id] = (counts[id] ?? 0) + 1;
+    }
+    return { date: toDayKey(gun), counts };
+  });
+
+  return {
+    projectId,
+    days: clampedDays,
+    columns: columns.map((c) => ({ id: c.id, name: c.name })),
+    series,
+    totalCards: cards.length,
+    cardsWithMoveHistory: movesByCard.size,
+  };
+}
+
+const CYCLE_TIME_WEEKS_DEFAULT = 8;
+const CYCLE_TIME_WEEKS_MIN = 4;
+const CYCLE_TIME_WEEKS_MAX = 26;
+
+export interface CycleTimeResult {
+  projectId: string;
+  overallAverageDays: number | null;
+  sampledCards: number;
+  totalDoneCards: number;
+  weeklySeries: { weekStart: string; averageDays: number | null; count: number }[];
+}
+
+/**
+ * Ortalama cycle time (yaratimdan Done'a girise kadar), haftalik trend
+ * olarak. "Hizlaniyor muyuz yavasliyor muyuz" sorusunu dogrudan cevaplar -
+ * CARD_COMPLETED aktivitesi (sutun ADINA degil, sadece zamana bagli) uzerine
+ * kurulu oldugu icin sutun yeniden adlandirmalarindan etkilenmez, CFD'den
+ * daha guvenilir bir sinyal.
+ */
+export async function getCycleTime(
+  projectId: string,
+  userId: string,
+  weeks: number = CYCLE_TIME_WEEKS_DEFAULT,
+): Promise<CycleTimeResult> {
+  await checkProjectAccess(projectId, userId);
+  const clampedWeeks = Math.min(Math.max(weeks, CYCLE_TIME_WEEKS_MIN), CYCLE_TIME_WEEKS_MAX);
+
+  const doneCards = await prisma.card.findMany({
+    where: { column: { projectId, isDone: true }, isArchived: false },
+    select: { id: true, createdAt: true },
+  });
+  if (doneCards.length === 0) {
+    return { projectId, overallAverageDays: null, sampledCards: 0, totalDoneCards: 0, weeklySeries: [] };
+  }
+
+  const cardIds = doneCards.map((c) => c.id);
+  const completions = await prisma.activity.findMany({
+    where: { projectId, cardId: { in: cardIds }, type: "CARD_COMPLETED" },
+    select: { cardId: true, createdAt: true },
+    orderBy: { createdAt: "desc" },
+  });
+
+  // Kart basina EN SON tamamlanma - kart done->baska->done sekerse (bounce)
+  // en guncel "bitis" bilgisi budur.
+  const completedAtByCard = new Map<string, Date>();
+  for (const c of completions) {
+    if (!c.cardId || completedAtByCard.has(c.cardId)) continue;
+    completedAtByCard.set(c.cardId, c.createdAt);
+  }
+
+  const createdAtByCard = new Map(doneCards.map((c) => [c.id, c.createdAt]));
+  const samples = Array.from(completedAtByCard.entries()).map(([cardId, completedAt]) => {
+    const olusturulma = createdAtByCard.get(cardId)!;
+    const gunFarki = (completedAt.getTime() - olusturulma.getTime()) / (24 * 60 * 60 * 1000);
+    return { completedAt, cycleDays: Math.max(gunFarki, 0) };
+  });
+
+  const ortalama = (liste: { cycleDays: number }[]) =>
+    liste.length > 0 ? Math.round((liste.reduce((s, x) => s + x.cycleDays, 0) / liste.length) * 10) / 10 : null;
+
+  const end = new Date();
+  const start = new Date(end.getTime() - (clampedWeeks - 1) * 7 * 24 * 60 * 60 * 1000);
+  const haftalar = eachWeekStart(start, end);
+
+  const weeklySeries = haftalar.map((haftaBaslangic, i) => {
+    const haftaBitis = i + 1 < haftalar.length ? new Date(haftalar[i + 1].getTime() - 1) : end;
+    const buHaftakiler = samples.filter((s) => s.completedAt >= haftaBaslangic && s.completedAt <= haftaBitis);
+    return { weekStart: toDayKey(haftaBaslangic), averageDays: ortalama(buHaftakiler), count: buHaftakiler.length };
+  });
+
+  return {
+    projectId,
+    overallAverageDays: ortalama(samples),
+    sampledCards: samples.length,
+    totalDoneCards: doneCards.length,
+    weeklySeries,
+  };
 }
