@@ -90,7 +90,12 @@ export async function getBoard(projectId: string, userId: string) {
 
   const kapakUrlleri = await imzaliKapakUrlleri(kapakYollari);
 
-  const boardColumns: Record<string, { id: string; title: string; wipLimit: number | null; isDone: boolean; taskIds: string[] }> = {};
+  const boardColumns: Record<string, {
+    id: string; title: string; wipLimit: number | null; isDone: boolean; taskIds: string[];
+    transitionMode: "OFF" | "WARN" | "ENFORCE";
+    requireAssignee: boolean; requireChecklistComplete: boolean;
+    requireDescription: boolean; requireNoOpenBlockers: boolean;
+  }> = {};
   const tasks: Record<string, unknown> = {};
 
   for (const col of columns) {
@@ -133,6 +138,11 @@ export async function getBoard(projectId: string, userId: string) {
       wipLimit: col.wipLimit,
       isDone: col.isDone,
       taskIds,
+      transitionMode: col.transitionMode,
+      requireAssignee: col.requireAssignee,
+      requireChecklistComplete: col.requireChecklistComplete,
+      requireDescription: col.requireDescription,
+      requireNoOpenBlockers: col.requireNoOpenBlockers,
     };
   }
 

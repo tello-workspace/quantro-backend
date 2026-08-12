@@ -36,6 +36,9 @@ export const updateCardSchema = z.object({
   parentCardId: z.string().nullable().optional(),
   estimate: z.number().int().min(0).max(9999).nullable().optional(),
   estimateMinutes: z.number().int().min(0).max(100000).nullable().optional(),
+  // Kolon gecis kurali ENFORCE modundaysa ve ihlal varsa tasima reddedilir;
+  // sadece ADMIN bu bayrakla "yine de tasi" diyebilir (bkz. checkColumnTransitionRules).
+  force: z.boolean().optional(),
 });
 
 export const duplicateCardSchema = z.object({

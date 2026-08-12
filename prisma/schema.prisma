@@ -509,8 +509,24 @@ model Column {
   wipLimit  Int? // Darboğaz uyarısı: aktif kart sayısı bunu aşarsa UI uyarır
   isDone    Boolean @default(false) // "Done" sütunu işareti → stale taraması bunu atlar
 
+  // Kolon GECIS kurallari - bir karti BU koluna tasirken kontrol edilir.
+  // OFF: kontrol yok (varsayilan, mevcut serbest davranis). WARN: ihlal
+  // varsa tasima olur ama uyari donuyor. ENFORCE: ihlal varsa tasima
+  // reddedilir (yalnizca ADMIN, updateCardSchema.force ile bypass edebilir).
+  transitionMode           ColumnRuleMode @default(OFF)
+  requireAssignee          Boolean        @default(false) // atanan zorunlu
+  requireChecklistComplete Boolean        @default(false) // checklist'in tamami isaretli olmali (checklist yoksa kural saglanmis sayilir)
+  requireDescription       Boolean        @default(false) // aciklama bos olamaz
+  requireNoOpenBlockers    Boolean        @default(false) // bu karti bloklayan, Done olmayan bir kart olamaz
+
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   cards   Card[]
+}
+
+enum ColumnRuleMode {
+  OFF
+  WARN
+  ENFORCE
 }
 
 model Card {

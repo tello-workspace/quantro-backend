@@ -12,6 +12,11 @@ export const updateColumnSchema = z.object({
   position: z.number().optional(),
   wipLimit: z.number().int().min(1).nullable().optional(),
   isDone: z.boolean().optional(),
+  transitionMode: z.enum(["OFF", "WARN", "ENFORCE"]).optional(),
+  requireAssignee: z.boolean().optional(),
+  requireChecklistComplete: z.boolean().optional(),
+  requireDescription: z.boolean().optional(),
+  requireNoOpenBlockers: z.boolean().optional(),
 });
 
 export type CreateColumnInput = z.infer<typeof createColumnSchema>;

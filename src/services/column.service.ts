@@ -69,11 +69,26 @@ export async function getColumnById(columnId: string, userId: string) {
   return column;
 }
 
+const GECIS_KURALI_ALANLARI = [
+  "transitionMode",
+  "requireAssignee",
+  "requireChecklistComplete",
+  "requireDescription",
+  "requireNoOpenBlockers",
+] as const;
+
 export async function updateColumn(columnId: string, input: UpdateColumnInput, userId: string) {
   const column = await prisma.column.findUnique({ where: { id: columnId } });
   if (!column) throw new NotFoundError("Sütun");
 
-  await checkProjectAccess(column.projectId, userId);
+  const { role } = await checkProjectAccess(column.projectId, userId);
+
+  // Gecis kurallari kartlarin akisini kilitleyebilir - rename/wipLimit'ten
+  // farkli olarak sadece admin degistirebilir.
+  const kuralDegisiyor = GECIS_KURALI_ALANLARI.some((alan) => input[alan] !== undefined);
+  if (kuralDegisiyor && role !== "ADMIN") {
+    throw new ForbiddenError("Geçiş kurallarını sadece adminler değiştirebilir");
+  }
 
   const updated = await prisma.column.update({
     where: { id: columnId },
