@@ -9,7 +9,7 @@ import { allocateCardNumber } from "@/services/card-key.service";
 import { checkColumnAccess, checkProjectAccess } from "@/services/access-control.service";
 import { broadcastToProject, SocketEvents } from "@/server/socket";
 import type { CreateCardInput, UpdateCardInput } from "@/schemas/card.schema";
-import type { Priority } from "@prisma/client";
+import type { Priority, CardType } from "@prisma/client";
 
 const assigneeInclude = {
   assignees: {
@@ -141,6 +141,7 @@ export async function createCard(columnId: string, input: CreateCardInput, userI
       description,
       creatorId: userId,
       priority: (input.priority as Priority) ?? "MEDIUM",
+      type: (input.type as CardType) ?? "TASK",
       dueDate: input.dueDate ? new Date(input.dueDate) : undefined,
       startDate: input.startDate ? new Date(input.startDate) : undefined,
       position,
@@ -172,6 +173,7 @@ export async function createCard(columnId: string, input: CreateCardInput, userI
     projectId,
     assignees: card.assignees.map((a) => ({ id: a.user.id, name: a.user.name, avatarUrl: a.user.avatarUrl })),
     priority: card.priority,
+    type: card.type,
     dueDate: card.dueDate?.toISOString() ?? null,
     startDate: card.startDate?.toISOString() ?? null,
     position: card.position,
@@ -285,6 +287,7 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
     input.title !== undefined ||
     input.description !== undefined ||
     input.priority !== undefined ||
+    input.type !== undefined ||
     input.dueDate !== undefined ||
     input.startDate !== undefined ||
     input.parentCardId !== undefined ||
@@ -326,6 +329,7 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
     input.title !== undefined ||
     input.description !== undefined ||
     input.priority !== undefined ||
+    input.type !== undefined ||
     input.dueDate !== undefined ||
     input.startDate !== undefined ||
     input.estimate !== undefined ||
@@ -344,6 +348,7 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
   if (input.title !== undefined) updateData.title = input.title;
   if (input.description !== undefined) updateData.description = input.description;
   if (input.priority !== undefined) updateData.priority = input.priority as Priority;
+  if (input.type !== undefined) updateData.type = input.type as CardType;
   if (input.dueDate !== undefined) updateData.dueDate = input.dueDate ? new Date(input.dueDate) : null;
   if (input.startDate !== undefined) updateData.startDate = input.startDate ? new Date(input.startDate) : null;
   if (input.parentCardId !== undefined) updateData.parentCardId = input.parentCardId;
@@ -470,6 +475,7 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
     projectId,
     assignees: updated.assignees.map((a) => ({ id: a.user.id, name: a.user.name, avatarUrl: a.user.avatarUrl })),
     priority: updated.priority,
+    type: updated.type,
     dueDate: updated.dueDate?.toISOString() ?? null,
     startDate: updated.startDate?.toISOString() ?? null,
     position: updated.position,
@@ -568,6 +574,7 @@ export async function duplicateCard(cardId: string, userId: string, options: Dup
       description: card.description,
       creatorId: userId,
       priority: card.priority,
+      type: card.type,
       dueDate: card.dueDate,
       startDate: card.startDate,
       position,
@@ -609,6 +616,7 @@ export async function duplicateCard(cardId: string, userId: string, options: Dup
     projectId: destAccess.projectId,
     assignees: newCard.assignees.map((a) => ({ id: a.user.id, name: a.user.name, avatarUrl: a.user.avatarUrl })),
     priority: newCard.priority,
+    type: newCard.type,
     dueDate: newCard.dueDate?.toISOString() ?? null,
     startDate: newCard.startDate?.toISOString() ?? null,
     position: newCard.position,
@@ -701,6 +709,7 @@ export async function moveCardToProject(cardId: string, targetColumnId: string, 
     projectId: destAccess.projectId,
     assignees: updated.assignees.map((a) => ({ id: a.user.id, name: a.user.name, avatarUrl: a.user.avatarUrl })),
     priority: updated.priority,
+    type: updated.type,
     dueDate: updated.dueDate?.toISOString() ?? null,
     startDate: updated.startDate?.toISOString() ?? null,
     position: updated.position,

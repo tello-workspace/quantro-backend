@@ -6,8 +6,13 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  // DATABASE_URL artik transaction-mode pooler'da (pgbouncer=true) - migration
+  // motoru prepared statement kullaniyor, transaction-mode bunu desteklemiyor.
+  // directUrl, migrate/db push icin session-mode pooler'a (eski DATABASE_URL)
+  // gidiyor; runtime sorgulari etkilenmiyor.
+  directUrl = env("DIRECT_URL")
 }
 
 // ---------- ENUMS ----------
@@ -35,6 +40,17 @@ enum Priority {
   MEDIUM
   HIGH
   URGENT
+}
+
+// Sabit enum - proje bazinda tanimlanabilir tip listesi karti (kartin kendi
+// onerisi) simdilik gereksiz karmasiklik katardi, bu bes tip is takibi icin
+// yeterli.
+enum CardType {
+  EPIC
+  STORY
+  TASK
+  BUG
+  SUBTASK
 }
 
 // Proje bazli tercih: efor tahmini "puan" (story point, gorecelik) mi yoksa
@@ -510,6 +526,7 @@ model Card {
   description    String?
   creatorId      String
   priority       Priority  @default(MEDIUM)
+  type           CardType  @default(TASK)
   // Efor tahmini - birimi (puan/saat) Project.estimateUnit belirler. Daha
   // once "storyPoints" olarak vardi, kullanimi sifirken kaldirilmisti
   // (20260804095500_remove_sprint_and_story_points) - bu kez kolon

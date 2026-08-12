@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { checkProjectAccess } from "@/services/access-control.service";
-import type { Priority } from "@prisma/client";
+import type { Priority, CardType } from "@prisma/client";
 
 const STALE_DAYS = 7;
 const DEADLINE_RISK_DAYS = 3;
@@ -29,6 +29,7 @@ export async function getProjectInsights(projectId: string, userId: string) {
       id: true,
       title: true,
       priority: true,
+      type: true,
       estimate: true,
       dueDate: true,
       lastActivityAt: true,
@@ -127,12 +128,22 @@ export async function getProjectInsights(projectId: string, userId: string) {
       assignees: c.assignees.map((a) => a.user),
     }));
 
+  // Is tipi kirilimi: aktif kartlarin (Done disindaki) CardType'a gore sayisi.
+  // Sifir olan tipler de gosterilsin diye ONCE tum tipler 0'la baslatiliyor.
+  const typeBreakdown = Object.fromEntries(
+    (["EPIC", "STORY", "TASK", "BUG", "SUBTASK"] as CardType[]).map((t) => [t, 0]),
+  ) as Record<CardType, number>;
+  for (const card of activeCards) {
+    typeBreakdown[card.type] += 1;
+  }
+
   return {
     generatedAt: now.toISOString(),
     staleCards,
     workload,
     wipViolations,
     deadlineRisks,
+    typeBreakdown,
   };
 }
 

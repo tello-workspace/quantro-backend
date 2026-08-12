@@ -109,6 +109,7 @@ export async function getBoard(projectId: string, userId: string) {
         columnId: card.columnId,
         position: card.position,
         priority: card.priority,
+        type: card.type,
         estimate: card.estimate,
         estimateMinutes: card.estimateMinutes,
         spentMinutes: card.spentMinutes,
