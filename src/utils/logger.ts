@@ -4,6 +4,7 @@
  * Validasyon/yetki gibi beklenen hatalar (400/401/403/404) buraya girmez —
  * sadece gerçek 500'ler loglanır.
  */
+import * as Sentry from "@sentry/node";
 import { prisma } from "@/lib/prisma";
 
 interface LogErrorParams {
@@ -39,4 +40,12 @@ export async function logError({ error, method, path, userId, organizationId }: 
   } catch (dbError) {
     console.error("[LOGGER] Hata veritabanina yazilamadi:", dbError);
   }
+
+  Sentry.withScope((scope) => {
+    scope.setTag("method", method);
+    scope.setTag("path", path);
+    if (userId) scope.setUser({ id: userId });
+    if (organizationId) scope.setTag("organizationId", organizationId);
+    Sentry.captureException(error instanceof Error ? error : new Error(message));
+  });
 }

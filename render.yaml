@@ -12,6 +12,7 @@ services:
     runtime: node
     plan: starter
     region: frankfurt
+    autoDeploy: yes
     buildCommand: npm install && npx prisma generate && npm run build
     startCommand: npm run start
     envVars:
@@ -55,4 +56,6 @@ services:
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SENTRY_DSN
         sync: false
