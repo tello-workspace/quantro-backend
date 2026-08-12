@@ -5,6 +5,7 @@ import { checkCardAccess } from "@/services/access-control.service";
 import { broadcastToProject, SocketEvents } from "@/server/socket";
 import * as notificationService from "@/services/notification.service";
 import { notifyWatchers, autoWatch } from "@/services/watcher.service";
+import { dispatchEvent } from "@/services/webhook.service";
 import type { CreateCommentInput, UpdateCommentInput } from "@/schemas/comment.schema";
 
 const authorSelect = { select: { id: true, name: true, email: true, avatarUrl: true } } as const;
@@ -101,6 +102,13 @@ export async function createComment(cardId: string, input: CreateCommentInput, u
     type: "COMMENT_ADDED",
     cardId,
     data: { preview: comment.text.slice(0, 80) },
+  });
+
+  void dispatchEvent(projectId, "CARD_COMMENTED", {
+    cardId,
+    title: cardTitle,
+    authorName: comment.author.name,
+    text: comment.text,
   });
 
   const mentionedUserIds = await extractMentionedUserIds(input.text, organizationId, userId);

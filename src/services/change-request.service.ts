@@ -5,6 +5,7 @@ import * as columnService from "@/services/column.service";
 import * as projectService from "@/services/project.service";
 import * as notificationService from "@/services/notification.service";
 import { broadcastToOrganization, SocketEvents } from "@/server/socket";
+import { dispatchEvent } from "@/services/webhook.service";
 import type {
   CreateChangeRequestInput,
   ListChangeRequestsInput,
@@ -317,6 +318,14 @@ export async function approveRequest(requestId: string, userId: string, note?: s
   });
 
   broadcastToOrganization(request.organizationId, SocketEvents.REQUEST_REVIEWED, updated);
+
+  if (request.projectId) {
+    void dispatchEvent(request.projectId, "CHANGE_REQUEST_APPROVED", {
+      requestId: request.id,
+      type: request.type,
+      title: sonuc.kind === "card" ? sonuc.title : undefined,
+    });
+  }
 
   return updated;
 }

@@ -11,6 +11,10 @@ afterAll(async () => {
 });
 
 describe("yorum sistemi - thread", () => {
+  // 60000ms: 3 ardisik createComment cagrisi, her biri artik webhook
+  // dispatchEvent() icin ek bir sorgu tetikliyor - transaction-mode pooler
+  // altinda bu ek round-trip'ler varsayilan 30000ms'i asabiliyor (bkz.
+  // bulk-card.test.ts'teki ayni sinif gecikme).
   it("yanit kok yoruma baglanir, yanita yanit da otomatik olarak ayni koke baglanir", async () => {
     const ws = await createWorkspace();
     orgIds.push(ws.org.id);
@@ -38,7 +42,7 @@ describe("yorum sistemi - thread", () => {
     expect(liste).toHaveLength(1);
     expect(liste[0].id).toBe(kok.id);
     expect(liste[0].replies.map((r) => r.id).sort()).toEqual([yanit1.id, yanit2.id].sort());
-  });
+  }, 60000);
 
   it("kok yorum silinince yanitlari da silinir", async () => {
     const ws = await createWorkspace();

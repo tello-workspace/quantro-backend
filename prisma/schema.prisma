@@ -220,6 +220,7 @@ model User {
   createdAutomationRules  AutomationRule[]
   createdCardTemplates    CardTemplate[]
   createdProjectTemplates ProjectTemplate[]
+  createdWebhooks         OutgoingWebhook[]
   watchedCards            CardWatcher[]
   uploadedProjectDocuments ProjectDocument[]
   archivedCards           Card[]                   @relation("CardArchivedBy")
@@ -454,8 +455,64 @@ model Project {
   customFields    CustomFieldDefinition[]
   documents       ProjectDocument[]
   savedViews      SavedView[]
+  webhooks        OutgoingWebhook[]
 
   @@unique([organizationId, key])
+}
+
+enum WebhookEvent {
+  CARD_CREATED
+  CARD_MOVED
+  CARD_ASSIGNED
+  CARD_COMMENTED
+  CHANGE_REQUEST_APPROVED
+}
+
+enum WebhookDeliveryStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+// Panodaki olaylarin disariya (Slack/Discord/kendi sistemine) akmasi -
+// GUVENLIK: url sadece kayit ve GONDERIM aninda dogrulanir (bkz.
+// utils/webhook-security.ts) - kullanicinin verdigi bir adrese sunucudan
+// istek atildigi icin SSRF riski var, ozel/yerel IP'lere cikilamaz.
+model OutgoingWebhook {
+  id          String         @id @default(cuid())
+  projectId   String
+  url         String
+  // HMAC-SHA256 imzalama sirri - gonderilen govdeyi X-Quantro-Signature
+  // basligiyla dogrulamak icin aliciya (bir kere) gosterilir.
+  secret      String
+  events      WebhookEvent[]
+  isActive    Boolean        @default(true)
+  createdById String
+  createdAt   DateTime       @default(now())
+
+  project    Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy  User                @relation(fields: [createdById], references: [id])
+  deliveries WebhookDelivery[]
+
+  @@index([projectId])
+}
+
+// Her gonderim denemesinin kaydi - "olu mektup" (surekli basarisiz olan)
+// gorunurlugu ve yeniden deneme sayaci icin.
+model WebhookDelivery {
+  id          String                @id @default(cuid())
+  webhookId   String
+  event       WebhookEvent
+  payload     Json
+  status      WebhookDeliveryStatus @default(PENDING)
+  attempts    Int                   @default(0)
+  lastError   String?
+  createdAt   DateTime              @default(now())
+  deliveredAt DateTime?
+
+  webhook OutgoingWebhook @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+
+  @@index([webhookId])
 }
 
 // Bir projeye ACIKCA verilmis erisim. ORG gorunurlukte hic kontrol

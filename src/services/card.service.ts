@@ -7,6 +7,7 @@ import * as automationService from "@/services/automation.service";
 import { notifyWatchers } from "@/services/watcher.service";
 import { allocateCardNumber } from "@/services/card-key.service";
 import { checkColumnAccess, checkProjectAccess } from "@/services/access-control.service";
+import { dispatchEvent } from "@/services/webhook.service";
 import { broadcastToProject, SocketEvents } from "@/server/socket";
 import type { CreateCardInput, UpdateCardInput } from "@/schemas/card.schema";
 import type { Priority, CardType } from "@prisma/client";
@@ -237,6 +238,12 @@ export async function createCard(columnId: string, input: CreateCardInput, userI
     trigger: "CARD_CREATED",
     cardId: card.id,
     columnId,
+  });
+
+  void dispatchEvent(projectId, "CARD_CREATED", {
+    cardId: card.id,
+    title: card.title,
+    columnId: card.columnId,
   });
 
   return card;
@@ -513,6 +520,13 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
       columnId: updated.columnId,
     });
 
+    void dispatchEvent(projectId, "CARD_MOVED", {
+      cardId: updated.id,
+      title: updated.title,
+      fromColumn: oldColumnName,
+      toColumn: newColumnName,
+    });
+
     // Otomasyon kurallari ayni karti (ornegin ASSIGN_USER ile assignees'i)
     // degistirmis olabilir ve kendi dogru card:updated yayinini az once yapti.
     // Asagidaki kosulsuz son yayin ve HTTP yaniti hala yukaridaki ESKI
@@ -539,6 +553,12 @@ export async function updateCard(cardId: string, input: UpdateCardInput, userId:
       type: "CARD_ASSIGNED",
       cardId: updated.id,
       data: { assignedTo: updated.assignees.map((a) => a.user.name) },
+    });
+
+    void dispatchEvent(projectId, "CARD_ASSIGNED", {
+      cardId: updated.id,
+      title: updated.title,
+      assignees: updated.assignees.map((a) => a.user.name),
     });
   }
 
