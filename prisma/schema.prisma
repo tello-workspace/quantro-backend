@@ -1061,13 +1061,26 @@ model Mail {
   isDraft        Boolean   @default(true)
   createdAt      DateTime  @default(now())
   sentAt         DateTime?
+  // Yanit/iletme zinciri. parentMailId dogrudan cevaplanan mesaji, threadId
+  // ise konusmanin KOKUNU gosterir (kokun kendisinde threadId = kendi id'si).
+  // Comment'teki parentCommentId deseninin ayni izdüsümü: zincir tek seviye
+  // tutuluyor - bir yanita yanit verilince threadId degismiyor, boylece
+  // konusmanin tamami tek bir esitlik sorgusuyla ( threadId = X ) cekilebilir.
+  // onDelete: SetNull cunku bir mesajin silinmesi, baskalarinin kutusundaki
+  // yanitlari yok etmemeli.
+  parentMailId   String?
+  threadId       String?
 
   organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   sender       User             @relation("MailSender", fields: [senderId], references: [id], onDelete: Cascade)
+  parent       Mail?            @relation("MailReplies", fields: [parentMailId], references: [id], onDelete: SetNull)
+  replies      Mail[]           @relation("MailReplies")
   recipients   MailRecipient[]
   attachments  MailAttachment[]
 
   @@index([organizationId, senderId, isDraft, createdAt])
+  @@index([threadId, createdAt])
+  @@index([parentMailId])
 }
 
 model MailRecipient {

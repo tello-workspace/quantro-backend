@@ -44,8 +44,13 @@ describe("kümülatif akış (CFD)", () => {
     expect(sonuc.totalCards).toBe(2);
     expect(sonuc.cardsWithMoveHistory).toBe(1);
 
+    // Anahtar YEREL takvim gununden kurulmali: servis de gunleri yerel Y/M/D
+    // ile kovaliyor (bkz. insight.service.ts toDayKey/eachDay). toISOString()
+    // ile UTC kullanilirsa UTC+3'te gece 00:00-02:59 arasi kosan test bir
+    // onceki gunun kovasini okur ve sayim tutmaz.
     const gununSayimi = (gunOnce: number) => {
-      const hedefTarih = new Date(Date.now() - gunOnce * GUN).toISOString().slice(0, 10);
+      const d = new Date(Date.now() - gunOnce * GUN);
+      const hedefTarih = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
       return sonuc.series.find((s) => s.date === hedefTarih)!.counts;
     };
 

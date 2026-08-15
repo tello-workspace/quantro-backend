@@ -4,7 +4,7 @@ import { NotFoundError, ForbiddenError, ValidationError, AppError } from "@/util
 import { supabaseAdmin, ATTACHMENTS_BUCKET, storageKeyHint } from "@/lib/supabaseAdmin";
 import { broadcastToUser, SocketEvents } from "@/server/socket";
 import { ALLOWED_MIME_TYPES, MAX_FILE_SIZE } from "@/lib/attachment-policy";
-import type { ComposeMailInput, RecipientGroup } from "@/schemas/mail.schema";
+import type { ComposeMailInput, RecipientGroup, ReplyMailInput } from "@/schemas/mail.schema";
 
 const SIGNED_URL_TTL_SECONDS = 60 * 60;
 const MAX_ATTACHMENTS_PER_MAIL = 10;
@@ -105,9 +105,78 @@ const mailListSelect = {
   isDraft: true,
   createdAt: true,
   sentAt: true,
+  parentMailId: true,
+  threadId: true,
   sender: { select: { id: true, name: true } },
   _count: { select: { attachments: true } },
 } as const;
+
+// "Yn:" / "İlt:" onekleri. Zaten onekli bir konuya tekrar eklenmez -
+// e-posta istemcilerindeki "Re: Re: Re:" birikmesini onlemek icin. Karsi
+// modun oneki varsa (yaniti iletirken) o temizlenip yenisi konur.
+const REPLY_PREFIX = "Yn:";
+const FORWARD_PREFIX = "İlt:";
+
+function prefixSubject(subject: string, prefix: string): string {
+  const sade = subject.replace(/^\s*(Yn:|İlt:)\s*/i, "").trim();
+  const konu = `${prefix} ${sade}`;
+  // Konu sutunu 200 karakterle sinirli (composeMailSchema ile ayni sinir).
+  return konu.length > 200 ? `${konu.slice(0, 199)}…` : konu;
+}
+
+// Yanitlanan mesaji ">" ile alintilar - duz metin govdede standart davranis.
+function quoteBody(original: { senderName: string; sentAt: Date | null; body: string }): string {
+  const tarih = original.sentAt ? original.sentAt.toLocaleString("tr-TR") : "";
+  const baslik = tarih
+    ? `${tarih} tarihinde ${original.senderName} yazdı:`
+    : `${original.senderName} yazdı:`;
+  const alinti = original.body
+    .split("\n")
+    .map((satir) => `> ${satir}`)
+    .join("\n");
+  return `\n\n${baslik}\n${alinti}`;
+}
+
+// Bir mesaja SADECE gonderen veya alicilarindan biri erisebilir - getMail'deki
+// kuralin ayni. Yanitlama/iletme de bu kapidan geciyor ki, mesaji gormeye
+// yetkisi olmayan biri parentMailId gondererek baskasinin konusmasina
+// yamanamasin (ve alintilanan govdeyi ogrenemesin).
+async function loadMailForReply(mailId: string, userId: string) {
+  const mail = await prisma.mail.findUnique({
+    where: { id: mailId },
+    include: {
+      sender: { select: { id: true, name: true } },
+      recipients: { select: { userId: true } },
+    },
+  });
+  if (!mail) throw new NotFoundError("Mesaj");
+
+  const aliciMi = mail.recipients.some((r) => r.userId === userId);
+  if (mail.senderId !== userId && !aliciMi) {
+    throw new ForbiddenError("Bu mesaja erişim yetkiniz yok");
+  }
+  // Gonderilmemis bir taslak yanitlanamaz - henuz kimseye ulasmadi.
+  if (mail.isDraft) throw new ValidationError("Taslak bir mesaj yanıtlanamaz");
+
+  return mail;
+}
+
+// parentMailId'den { parentMailId, threadId } turetir. Zincir TEK SEVIYE
+// tutuluyor: bir yanita yanit verildiginde threadId degismiyor, yalnizca
+// parentMailId dogrudan cevaplanani gosteriyor.
+async function resolveThreadLink(
+  parentMailId: string | undefined,
+  organizationId: string,
+  userId: string,
+): Promise<{ parentMailId: string | null; threadId: string | null }> {
+  if (!parentMailId) return { parentMailId: null, threadId: null };
+
+  const kaynak = await loadMailForReply(parentMailId, userId);
+  if (kaynak.organizationId !== organizationId) {
+    throw new ForbiddenError("Bu mesaja erişim yetkiniz yok");
+  }
+  return { parentMailId: kaynak.id, threadId: kaynak.threadId ?? kaynak.id };
+}
 
 export async function composeMail(
   organizationId: string,
@@ -127,6 +196,10 @@ export async function composeMail(
     throw new ValidationError("En az bir alıcı seçilmeli");
   }
 
+  // Yanit zinciri: parentMailId verildiyse kaynagin erisim kontrolunden
+  // gecilir ve konusma koku devralinir.
+  const zincir = await resolveThreadLink(input.parentMailId, organizationId, userId);
+
   const mail = await prisma.mail.create({
     data: {
       organizationId,
@@ -135,11 +208,20 @@ export async function composeMail(
       body: input.body,
       isDraft,
       sentAt: isDraft ? null : new Date(),
+      parentMailId: zincir.parentMailId,
+      threadId: zincir.threadId,
       recipients:
         recipientIds.length > 0 ? { createMany: { data: recipientIds.map((id) => ({ userId: id })) } } : undefined,
     },
     select: mailListSelect,
   });
+
+  // Kok mesajlarda threadId = kendi id'si; boylece "konusmayi getir" her
+  // zaman tek bir esitlik sorgusu ( threadId = X ) olur.
+  if (!zincir.threadId) {
+    await prisma.mail.update({ where: { id: mail.id }, data: { threadId: mail.id } });
+    mail.threadId = mail.id;
+  }
 
   if (!isDraft) {
     await notifyRecipients({ id: mail.id, subject: mail.subject, senderName: mail.sender.name }, recipientIds);
@@ -201,6 +283,71 @@ export async function updateDraft(
       (r) => r.userId,
     );
     await notifyRecipients({ id: mail.id, subject: mail.subject, senderName: mail.sender.name }, alicilar);
+  }
+
+  return mail;
+}
+
+// Yanitla / Tumunu yanitla / Ilet. Uc mod da ayni zincire yazar; tek fark
+// alici kumesinin nereden turedigi:
+//   REPLY      -> yalnizca kaynagin gondereni
+//   REPLY_ALL  -> gonderen + kaynagin tum alicilari (kendim haric)
+//   FORWARD    -> istemcinin sectigi yeni alicilar (gecmis alicilar tasinmaz)
+// Alicilar yine resolveRecipients'tan geciyor, yani uyeligi biten biri
+// otomatik eleniyor: eski bir konusmayi yanitlamak, organizasyondan ayrilmis
+// birine mesaj gondermenin arka kapisi olamaz.
+export async function replyToMail(
+  mailId: string,
+  input: Partial<ReplyMailInput> & Pick<ReplyMailInput, "mode" | "body">,
+  userId: string,
+) {
+  const kaynak = await loadMailForReply(mailId, userId);
+  await requireMembership(kaynak.organizationId, userId);
+
+  const isDraft = input.isDraft ?? false;
+  const iletiliyor = input.mode === "FORWARD";
+
+  let hamAlicilar: string[];
+  let hamGruplar: RecipientGroup[];
+  if (iletiliyor) {
+    hamAlicilar = input.recipientUserIds ?? [];
+    hamGruplar = input.recipientGroups ?? [];
+  } else if (input.mode === "REPLY") {
+    hamAlicilar = [kaynak.senderId];
+    hamGruplar = [];
+  } else {
+    hamAlicilar = [kaynak.senderId, ...kaynak.recipients.map((r) => r.userId)];
+    hamGruplar = [];
+  }
+
+  const recipientIds = await resolveRecipients(kaynak.organizationId, hamAlicilar, hamGruplar, userId);
+  if (!isDraft && recipientIds.length === 0) {
+    throw new ValidationError("En az bir alıcı seçilmeli");
+  }
+
+  const subject = prefixSubject(kaynak.subject, iletiliyor ? FORWARD_PREFIX : REPLY_PREFIX);
+  const body =
+    input.body +
+    quoteBody({ senderName: kaynak.sender.name, sentAt: kaynak.sentAt, body: kaynak.body });
+
+  const mail = await prisma.mail.create({
+    data: {
+      organizationId: kaynak.organizationId,
+      senderId: userId,
+      subject,
+      body,
+      isDraft,
+      sentAt: isDraft ? null : new Date(),
+      parentMailId: kaynak.id,
+      threadId: kaynak.threadId ?? kaynak.id,
+      recipients:
+        recipientIds.length > 0 ? { createMany: { data: recipientIds.map((id) => ({ userId: id })) } } : undefined,
+    },
+    select: mailListSelect,
+  });
+
+  if (!isDraft) {
+    await notifyRecipients({ id: mail.id, subject: mail.subject, senderName: mail.sender.name }, recipientIds);
   }
 
   return mail;
@@ -272,7 +419,30 @@ export async function getMail(mailId: string, userId: string) {
       )
     : mail.attachments.map((a) => ({ ...a, downloadUrl: null }));
 
-  return { ...mail, attachments, isRecipient: !!alici };
+  // Konusmanin diger mesajlari (bu mesaj haric). Yalnizca KULLANICININ
+  // gorme hakki olanlar: gonderdikleri + alicisi oldugu mesajlar. Ayni
+  // zincirdeki ama baskalari arasinda gecen bir yanit (orn. iletme)
+  // sizmasin diye filtre burada, sorgu seviyesinde.
+  const threadId = mail.threadId ?? mail.id;
+  const thread = await prisma.mail.findMany({
+    where: {
+      threadId,
+      id: { not: mail.id },
+      isDraft: false,
+      OR: [{ senderId: userId }, { recipients: { some: { userId, deletedAt: null } } }],
+    },
+    orderBy: { sentAt: "asc" },
+    select: {
+      id: true,
+      subject: true,
+      body: true,
+      sentAt: true,
+      sender: { select: { id: true, name: true } },
+      _count: { select: { attachments: true } },
+    },
+  });
+
+  return { ...mail, attachments, isRecipient: !!alici, thread };
 }
 
 // Baglama duyarli sil: taslak -> gercekten siler (henuz kimseye gitmedi);
