@@ -9,6 +9,12 @@ on:
 jobs:
   typecheck-and-lint:
     runs-on: ubuntu-latest
+    # Sema datasource'unda url + directUrl var; prisma CLI ikisini de DB'ye
+    # hic baglanmadan once cozmeye calisir, tanimsizsa P1012 ile durur.
+    # Bu job gercekten baglanmadigi icin degerler sahte olabilir.
+    env:
+      DATABASE_URL: "postgresql://postgres:ci@localhost:5432/tello_ci"
+      DIRECT_URL: "postgresql://postgres:ci@localhost:5432/tello_ci"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -44,6 +50,9 @@ jobs:
           --health-retries 10
     env:
       DATABASE_URL: "postgresql://postgres:ci@localhost:5432/tello_ci"
+      # migrate/generate icin session-mode adres. CI'daki Postgres zaten
+      # dogrudan baglanti (pooler yok), o yuzden DATABASE_URL ile ayni.
+      DIRECT_URL: "postgresql://postgres:ci@localhost:5432/tello_ci"
       JWT_SECRET: "ci-test-secret"
     steps:
       - uses: actions/checkout@v4
