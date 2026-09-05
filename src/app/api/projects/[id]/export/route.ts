@@ -30,8 +30,21 @@ function indirmeBasligi(ascii: string, utf8: string): string {
   return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(utf8)}`;
 }
 
+// Disa aktarma panonun kendi tavaniyla (kolon basina 500 kart) sinirliydi ve
+// kesildigini kimseye soylemiyordu; "yedek" diye indirilen dosya sessizce
+// eksik oluyordu. Burada tavani cok daha yukari cekiyoruz - yine de sonsuz
+// degil, bellegi korumak icin bir tavan sart - ve kesme olduysa bunu
+// X-Export-Truncated basligiyla (json formatinda ayrica "kesildi" alaniyla)
+// aciktan bildiriyoruz.
+const EXPORT_KART_TAVANI = 5000;
+
+function kesildiBasligi(kesildi: boolean): Record<string, string> {
+  return kesildi ? { "X-Export-Truncated": "true" } : {};
+}
+
 // Board'u disari aktar: ?format=xlsx | csv | json (varsayilan xlsx).
 // ?lang=tr | en  -> xlsx basliklarinin dili.
+// ?archived=1    -> arsivlenmis kartlar da dahil (yedek almak icin).
 // Yedekleme, raporlama ve gecis islemleri icin - salt okunur.
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const authError = await authenticate(request);
@@ -54,7 +67,12 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       );
     }
 
-    const board = (await boardService.getBoard(id, user.id)) as unknown as BoardShape;
+    const tamVeri = await boardService.getBoard(id, user.id, {
+      kartTavani: EXPORT_KART_TAVANI,
+      arsivliDahil: searchParams.get("archived") === "1",
+    });
+    const board = tamVeri as unknown as BoardShape;
+    const kesikBaslik = kesildiBasligi(tamVeri.kesildi);
     const projeAdi = await projeAdiGetir(id);
 
     if (format === "xlsx") {
@@ -67,6 +85,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
           "Content-Disposition": indirmeBasligi(ascii, utf8),
           "Content-Length": String(arabellek.byteLength),
+          ...kesikBaslik,
         },
       });
     }
@@ -78,17 +97,21 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         headers: {
           "Content-Type": "text/csv; charset=utf-8",
           "Content-Disposition": indirmeBasligi(ascii, utf8),
+          ...kesikBaslik,
         },
       });
     }
 
     if (format === "json") {
       const { ascii, utf8 } = dosyaAdiUret(projeAdi, "json");
-      return new Response(JSON.stringify(board, null, 2), {
+      // json ciktisi tamVeri'den uretiliyor: "kesildi" alani da dosyaya
+      // giriyor, betikle yedek alan taraf eksikligi programatik gorebiliyor.
+      return new Response(JSON.stringify(tamVeri, null, 2), {
         status: 200,
         headers: {
           "Content-Type": "application/json; charset=utf-8",
           "Content-Disposition": indirmeBasligi(ascii, utf8),
+          ...kesikBaslik,
         },
       });
     }

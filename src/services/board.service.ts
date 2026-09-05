@@ -31,7 +31,29 @@ async function imzaliKapakUrlleri(yollar: string[]): Promise<Map<string, string>
   return harita;
 }
 
-export async function getBoard(projectId: string, userId: string) {
+// Panonun kendisi icin savunma amacli tavan; disa aktarma gibi eksiksizlik
+// bekleyen cagiranlar bunu yukseltebiliyor (bkz. BoardSecenekleri).
+const VARSAYILAN_KART_TAVANI = 500;
+
+export interface BoardSecenekleri {
+  /** Kolon basina cekilecek en fazla kart sayisi. */
+  kartTavani?: number;
+  /** Arsivlenmis kartlar da dahil edilsin mi. */
+  arsivliDahil?: boolean;
+}
+
+export async function getBoard(
+  projectId: string,
+  userId: string,
+  secenekler: BoardSecenekleri = {},
+) {
+  // Tavan ve arsiv filtresi artik cagirana acik: ayni sorgu hem panoyu
+  // (500 kart, arsivsiz) hem de "yedek" iddiasindaki disa aktarmayi
+  // besliyordu; disa aktarma sessizce kesiliyordu. Varsayilanlar eski
+  // davranisin BIREBIR aynisi.
+  const kartTavani = secenekler.kartTavani ?? VARSAYILAN_KART_TAVANI;
+  const arsivliDahil = secenekler.arsivliDahil ?? false;
+
   // Uzak veritabaninda her sorgu ~140ms. Erisim kontrolu pano sorgusundan
   // once sirayla beklenirse bu bedel iki kez daha odeniyor; ikisini paralel
   // baslatip yetki hatasini yine de veriyi donmeden firlatiyoruz.
@@ -55,9 +77,9 @@ export async function getBoard(projectId: string, userId: string) {
         // savunma amacli bir tavan. Normal boyuttaki bir projede hicbir
         // kolon bu sayiya yaklasmaz.
         cards: {
-          take: 500,
+          take: kartTavani,
           orderBy: { position: "asc" },
-          where: { isArchived: false },
+          where: arsivliDahil ? {} : { isArchived: false },
           include: {
             assignees: { include: { user: { select: { id: true, name: true, avatarUrl: true, badges: { include: { badge: { select: { id: true, name: true, color: true, icon: true } } } } } } } },
             labels: { include: { label: true } },
@@ -146,9 +168,15 @@ export async function getBoard(projectId: string, userId: string) {
     };
   }
 
+  // Kesme artik sessiz degil: tavana dayanan bir kolon varsa cikti EKSIK
+  // demektir. Disa aktarma bu ciktiyi "yedek" olarak sunuyor, eksikligi
+  // cagirana bildirmezsek kullanici eksik yedekle projeyi temizleyebilir.
+  const kesildi = columns.some((c) => c.cards.length >= kartTavani);
+
   return {
     columns: boardColumns,
     tasks,
+    kesildi,
     myRole: access.role,
     projectKey: project.key,
     estimateUnit: project.estimateUnit,
