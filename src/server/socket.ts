@@ -3,6 +3,7 @@ import { Server as HttpServer } from "http";
 import { Server as SocketIOServer, Socket } from "socket.io";
 import { verifyToken } from "@/utils/jwt";
 import { prisma } from "@/lib/prisma";
+import { checkProjectAccess, checkCardAccess, filterVisibleProjects } from "@/services/access-control.service";
 
 export interface ServerSocketEvents {
   // Connection events
@@ -382,6 +383,9 @@ export interface AuthenticatedSocket extends Socket {
   userEmail?: string;
   organizations?: string[];
   projects?: string[];
+  // Token'in bitis zamani (ms). Handshake'te bir kez okunur, oturum taramasi
+  // bunu kullanip suresi dolmus baglantilari dusurur (bkz. sweepExpiredSessions).
+  tokenExpiresAt?: number;
 }
 
 // server.ts (require ile) ve Next'in API route'lari (Next'in kendi bundler'i
@@ -394,9 +398,17 @@ export function getIO(): SocketIOServer<ServerSocketEvents> | null {
 }
 
 // ─── Oda Erisim Kontrolleri ─────────────────────────────────────────
-// REST tarafindaki checkMembership'in socket karsiligi. Proje/kart icin
-// baglanti anindaki sorguyla ayni OR kosulu kullanilir (sahip VEYA org uyesi).
-
+// REST tarafindaki access-control.service.ts fonksiyonlarinin (checkProjectAccess/
+// checkCardAccess) TEK dogruluk kaynagi olarak burada da kullanilmasi sart.
+//
+// Onceden bu fonksiyonlar kendi ham "sahip VEYA org uyesi" sorgularini
+// calistiriyordu - bu, GUEST rolunu (yalnizca ACIKCA eklendigi projeleri
+// gormesi gereken) ve PRIVATE/TEAM gorunurluklu projeleri tamamen atlatiyordu.
+// Sonuc: REST API'de checkProjectAccess ile gizlenen bir proje/kart, socket
+// odalarina (join:project, join:card) katilip canli kart/yorum/ek/checklist
+// olaylarini dinleyerek okunabiliyordu. checkProjectAccess/checkCardAccess
+// zaten NotFoundError/ForbiddenError firlatiyor - burada sadece true/false'a
+// cevriliyor.
 async function canAccessOrganization(userId: string, organizationId: string): Promise<boolean> {
   const member = await prisma.organizationMember.findUnique({
     where: { organizationId_userId: { organizationId, userId } },
@@ -406,54 +418,34 @@ async function canAccessOrganization(userId: string, organizationId: string): Pr
 }
 
 async function canAccessProject(userId: string, projectId: string): Promise<boolean> {
-  const project = await prisma.project.findFirst({
-    where: {
-      id: projectId,
-      OR: [
-        { ownerId: userId },
-        { organization: { members: { some: { userId } } } },
-      ],
-    },
-    select: { id: true },
-  });
-  return Boolean(project);
+  try {
+    await checkProjectAccess(projectId, userId);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function canAccessCard(userId: string, cardId: string): Promise<boolean> {
-  const card = await prisma.card.findFirst({
-    where: {
-      id: cardId,
-      column: {
-        project: {
-          OR: [
-            { ownerId: userId },
-            { organization: { members: { some: { userId } } } },
-          ],
-        },
-      },
-    },
-    select: { id: true },
-  });
-  return Boolean(card);
+  try {
+    await checkCardAccess(cardId, userId);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
-async function getAccessibleCard(userId: string, cardId: string): Promise<ConflictCardRef | null> {
-  const card = await prisma.card.findFirst({
-    where: {
-      id: cardId,
-      column: {
-        project: {
-          OR: [
-            { ownerId: userId },
-            { organization: { members: { some: { userId } } } },
-          ],
-        },
-      },
-    },
-    select: { id: true, title: true, column: { select: { projectId: true } } },
-  });
-  if (!card) return null;
-  return { id: card.id, title: card.title, projectId: card.column.projectId };
+// Cakisma hesabi organizasyona gore kapsanmak zorunda oldugu icin kartin
+// organizationId'si de tasiniyor (ConflictCardRef payload sekli degismedi).
+type ErisilebilirKart = ConflictCardRef & { organizationId: string };
+
+async function getAccessibleCard(userId: string, cardId: string): Promise<ErisilebilirKart | null> {
+  try {
+    const access = await checkCardAccess(cardId, userId);
+    return { id: cardId, title: access.cardTitle, projectId: access.projectId, organizationId: access.organizationId };
+  } catch {
+    return null;
+  }
 }
 
 // ─── Git Cakisma Erken Uyari — Presence Takibi ─────────────────────────
@@ -466,6 +458,11 @@ type PresenceEntry = {
   cardTitle: string;
   userName: string;
   projectId: string;
+  organizationId: string;
+  // Harita artik organizasyona gore kapsanmis bir anahtarla tutuldugu icin
+  // dosya yolu kaydin kendisinde saklaniyor; conflict:resolved yayini bunu
+  // anahtardan geri ayristirmak zorunda kalmasin.
+  filePath: string;
   socketId: string;
   lastSeenAt: number;
 };
@@ -477,10 +474,28 @@ type PresenceEntry = {
 const PRESENCE_TTL_MS = 15 * 60 * 1000; // 15 dakika
 const PRESENCE_SWEEP_MS = 5 * 60 * 1000; // bayat kayit taramasi araligi
 
-// filePath -> userId -> o an o dosyada hangi kartla calistigi
+// "org::filePath" -> userId -> o an o dosyada hangi kartla calistigi.
+//
+// Anahtar SADECE filePath olsaydi (onceki hali) harita tum kiracilar icin
+// ortak olurdu: `package.json`, `src/app/page.tsx` gibi yollar farkli
+// musteriler arasinda neredeyse kesin cakisir ve karsi tarafin KART BASLIGI,
+// projectId'si ve kullanici adi hic ilgisi olmayan bir organizasyonun pano
+// odasina yayinlanirdi. Kapsam anahtara tasinarak cakisma hesabi organizasyon
+// sinirinin disina cikamaz hale getirildi.
 const presenceByFile = new Map<string, Map<string, PresenceEntry>>();
-// socket.id -> en son bildirilen dosya yolu (kullanici dosya degistirince eskisini temizlemek icin)
+// socket.id -> en son bildirilen presence anahtari ("org::filePath"),
+// kullanici dosya degistirince eskisini temizlemek icin
 const lastFileBySocket = new Map<string, string>();
+
+// Cakisma haritasinin organizasyon kapsamli anahtari.
+function presenceKey(organizationId: string, filePath: string): string {
+  return `${organizationId}::${filePath}`;
+}
+
+// Cakisan iki kart FARKLI projelerdeyse, karsi tarafin basligini o projeye
+// erisimi olmayan odaya yollamamak icin baslik bu metinle degistirilir —
+// uyarinin kendisi (dosya + kisi) yine gorunur, icerik sizmaz.
+const GIZLI_KART_BASLIGI = "Erişiminiz olmayan bir kart";
 
 function isFresh(entry: PresenceEntry): boolean {
   return Date.now() - entry.lastSeenAt < PRESENCE_TTL_MS;
@@ -489,8 +504,8 @@ function isFresh(entry: PresenceEntry): boolean {
 // Bir kaydi haritalardan cikarir ve bu cikis yuzunden ortadan kalkan
 // cakismalar icin conflict:resolved yayinlar — boylece panodaki rozet
 // sayfa yenilenmeden kaybolur.
-function removePresence(filePath: string, userId: string) {
-  const users = presenceByFile.get(filePath);
+function removePresence(key: string, userId: string) {
+  const users = presenceByFile.get(key);
   if (!users) return;
 
   const leaving = users.get(userId);
@@ -498,7 +513,7 @@ function removePresence(filePath: string, userId: string) {
 
   users.delete(userId);
   lastFileBySocket.delete(leaving.socketId);
-  if (users.size === 0) presenceByFile.delete(filePath);
+  if (users.size === 0) presenceByFile.delete(key);
 
   for (const [otherUserId, other] of users) {
     if (otherUserId === userId) continue;
@@ -506,7 +521,7 @@ function removePresence(filePath: string, userId: string) {
     if (!isFresh(other)) continue;
 
     const payload: ConflictResolvedPayload = {
-      filePath,
+      filePath: leaving.filePath,
       cardIds: [leaving.cardId, other.cardId],
     };
 
@@ -518,28 +533,68 @@ function removePresence(filePath: string, userId: string) {
 }
 
 function clearPresence(socketId: string, userId: string) {
-  const prevFile = lastFileBySocket.get(socketId);
+  const prevKey = lastFileBySocket.get(socketId);
   lastFileBySocket.delete(socketId);
-  if (!prevFile) return;
-  removePresence(prevFile, userId);
+  if (!prevKey) return;
+  removePresence(prevKey, userId);
 }
 
 // Bir dosyadaki bayat kayitlari atar. Map uzerinde iterasyon sirasinda silme
 // JS'te guvenli, ama removePresence dosya bosalinca presenceByFile'dan girdiyi
 // silebilecegi icin cagiran taraf haritayi SONRADAN yeniden almalidir.
-function pruneStaleOnFile(filePath: string) {
-  const users = presenceByFile.get(filePath);
+function pruneStaleOnFile(key: string) {
+  const users = presenceByFile.get(key);
   if (!users) return;
   for (const [userId, entry] of users) {
-    if (!isFresh(entry)) removePresence(filePath, userId);
+    if (!isFresh(entry)) removePresence(key, userId);
   }
 }
 
 function sweepStalePresence() {
-  for (const [filePath, users] of presenceByFile) {
+  for (const [key, users] of presenceByFile) {
     for (const [userId, entry] of users) {
-      if (!isFresh(entry)) removePresence(filePath, userId);
+      if (!isFresh(entry)) removePresence(key, userId);
     }
+  }
+}
+
+// Oturum yalnizca handshake aninda dogrulaniyordu: token'in suresi dolsa ya da
+// kullanici silinse bile acik socket, baglanti kopana kadar kart/yorum/sohbet
+// olaylarini almaya devam ediyordu (REST tarafi 401 verirken socket canli).
+// Bu tarama, dogrulamayi periyodik hale getirip artik gecerli olmayan
+// baglantilari dusurur.
+//
+// Socket basina degil TEK sorgu ile calisiyor: yasayan kullanicilar tek bir
+// findMany ile bulunuyor. Havuz sinirina (Supabase pool_size 15) duyarli bir
+// kod tabani oldugu icin socket basina periyodik sorgu bilerek yapilmadi.
+const SESSION_SWEEP_MS = 5 * 60 * 1000; // oturum yeniden dogrulama araligi
+
+async function sweepExpiredSessions() {
+  const simdi = Date.now();
+  const kalanlar: AuthenticatedSocket[] = [];
+
+  for (const socket of yereldekiSocketler()) {
+    if (socket.tokenExpiresAt !== undefined && socket.tokenExpiresAt <= simdi) {
+      socket.emit(SocketEvents.AUTH_ERROR, "Oturum suresi doldu");
+      socket.disconnect(true);
+      continue;
+    }
+    if (socket.userId) kalanlar.push(socket);
+  }
+
+  const userIdleri = [...new Set(kalanlar.map((s) => s.userId!))];
+  if (userIdleri.length === 0) return;
+
+  const yasayanlar = await prisma.user.findMany({
+    where: { id: { in: userIdleri } },
+    select: { id: true },
+  });
+  const yasayanSet = new Set(yasayanlar.map((u) => u.id));
+
+  for (const socket of kalanlar) {
+    if (yasayanSet.has(socket.userId!)) continue;
+    socket.emit(SocketEvents.AUTH_ERROR, "Kullanici bulunamadi");
+    socket.disconnect(true);
   }
 }
 
@@ -578,6 +633,13 @@ export function initializeSocket(httpServer: HttpServer): SocketIOServer<ServerS
       const payload = verifyToken(token as string);
       if (!payload) return next(new Error("Invalid token"));
 
+      // Token'in "exp" degeri saklaniyor: oturum yalnizca handshake aninda
+      // dogrulaniyordu, sonrasinda hicbir kontrol yoktu. JWT omru 7 gun ve
+      // socket pingInterval ile suresiz canli tutuldugu icin, suresi dolmus
+      // (REST'te 401 alan) bir oturum socket'ten yayin almaya devam ediyordu.
+      const tokenExp = (payload as unknown as { exp?: number }).exp;
+      socket.tokenExpiresAt = typeof tokenExp === "number" ? tokenExp * 1000 : undefined;
+
       // Fetch user from DB to ensure they still exist
       const user = await prisma.user.findUnique({
         where: { id: payload.userId },
@@ -593,23 +655,29 @@ export function initializeSocket(httpServer: HttpServer): SocketIOServer<ServerS
       // Fetch user's organizations for room joining
       const memberships = await prisma.organizationMember.findMany({
         where: { userId: user.id },
-        select: { organizationId: true },
+        select: { organizationId: true, role: true },
       });
 
       socket.organizations = memberships.map((m) => m.organizationId);
 
-      // Fetch user's projects
-      const projects = await prisma.project.findMany({
-        where: {
-          OR: [
-            { ownerId: user.id },
-            { organization: { members: { some: { userId: user.id } } } },
-          ],
-        },
-        select: { id: true },
+      // Fetch user's projects — yalnizca GORUNUR olanlar. Ham "sahip VEYA org
+      // uyesi" sorgusu GUEST rolunu ve PRIVATE/TEAM gorunurlugunu atlatirdi:
+      // baglanti aninda TUM org projelerinin odasina otomatik katilip REST'te
+      // erisimi olmayan projelerin canli kart/yorum olaylarini dinleyebilirdi.
+      // access-control.service.ts'teki filterVisibleProjects REST tarafiyla
+      // (checkProjectAccess) ayni kurali uygular.
+      const orgProjects = await prisma.project.findMany({
+        where: { organizationId: { in: socket.organizations } },
+        select: { id: true, ownerId: true, visibility: true, organizationId: true },
       });
+      const visibleProjectIds: string[] = [];
+      for (const { organizationId, role } of memberships) {
+        const inOrg = orgProjects.filter((p) => p.organizationId === organizationId);
+        const visible = await filterVisibleProjects(inOrg, user.id, role);
+        visibleProjectIds.push(...visible.map((p) => p.id));
+      }
 
-      socket.projects = projects.map((p) => p.id);
+      socket.projects = visibleProjectIds;
 
       next();
     } catch (error) {
@@ -667,44 +735,64 @@ export function initializeSocket(httpServer: HttpServer): SocketIOServer<ServerS
       clearPresence(socket.id, socket.userId);
 
       const filePath = data.filePath;
+      // Kapsam anahtari: ayni dosya yolunda calisan iki kisi ancak AYNI
+      // organizasyondaysa cakisma sayilir (bkz. presenceByFile notu).
+      const key = presenceKey(cardInfo.organizationId, filePath);
 
       // Bayat kayitlari kendi girdimizi eklemeden ONCE at: hem yanlis alarmi
       // onler hem de temizlik sirasinda cikan conflict:resolved yayinlarinin
       // bizim yeni girdimizi hesaba katmasini engeller.
-      pruneStaleOnFile(filePath);
+      pruneStaleOnFile(key);
 
       // pruneStaleOnFile dosyayi bosaltip haritadan silmis olabilir, bu yuzden
       // referans temizlikten SONRA aliniyor.
-      let usersOnFile = presenceByFile.get(filePath);
+      let usersOnFile = presenceByFile.get(key);
       if (!usersOnFile) {
         usersOnFile = new Map();
-        presenceByFile.set(filePath, usersOnFile);
+        presenceByFile.set(key, usersOnFile);
       }
       usersOnFile.set(socket.userId, {
         cardId: cardInfo.id,
         cardTitle: cardInfo.title,
         userName: socket.userName || "Bilinmeyen",
         projectId: cardInfo.projectId,
+        organizationId: cardInfo.organizationId,
+        filePath,
         socketId: socket.id,
         lastSeenAt: Date.now(),
       });
-      lastFileBySocket.set(socket.id, filePath);
+      lastFileBySocket.set(socket.id, key);
 
       for (const [otherUserId, otherInfo] of usersOnFile) {
         if (otherUserId === socket.userId) continue;
         if (otherInfo.cardId === cardInfo.id) continue; // ayni kart = isbirligi, cakisma degil
 
-        const payload: ConflictPayload = {
-          filePath,
-          cardA: { id: cardInfo.id, title: cardInfo.title, projectId: cardInfo.projectId },
-          userA: { id: socket.userId, name: socket.userName || "Bilinmeyen" },
-          cardB: { id: otherInfo.cardId, title: otherInfo.cardTitle, projectId: otherInfo.projectId },
-          userB: { id: otherUserId, name: otherInfo.userName },
-        };
+        const cardA: ConflictCardRef = { id: cardInfo.id, title: cardInfo.title, projectId: cardInfo.projectId };
+        const cardB: ConflictCardRef = { id: otherInfo.cardId, title: otherInfo.cardTitle, projectId: otherInfo.projectId };
+        const userA: ConflictUserRef = { id: socket.userId, name: socket.userName || "Bilinmeyen" };
+        const userB: ConflictUserRef = { id: otherUserId, name: otherInfo.userName };
+        const ayriProje = otherInfo.projectId !== cardInfo.projectId;
 
-        broadcastToProject(cardInfo.projectId, SocketEvents.CONFLICT_DETECTED, payload);
-        if (otherInfo.projectId !== cardInfo.projectId) {
-          broadcastToProject(otherInfo.projectId, SocketEvents.CONFLICT_DETECTED, payload);
+        // Ayni organizasyon icinde bile iki kart farkli projelerde olabilir ve
+        // proje odasindaki herkesin oteki projeye erisimi yok (GUEST/TEAM/
+        // PRIVATE). Bu yuzden her odaya yalnizca KENDI kartinin basligi tam
+        // gonderiliyor, karsi tarafinki maskeleniyor.
+        broadcastToProject(cardInfo.projectId, SocketEvents.CONFLICT_DETECTED, {
+          filePath,
+          cardA,
+          userA,
+          cardB: ayriProje ? { ...cardB, title: GIZLI_KART_BASLIGI } : cardB,
+          userB,
+        } satisfies ConflictPayload);
+
+        if (ayriProje) {
+          broadcastToProject(otherInfo.projectId, SocketEvents.CONFLICT_DETECTED, {
+            filePath,
+            cardA: { ...cardA, title: GIZLI_KART_BASLIGI },
+            userA,
+            cardB,
+            userB,
+          } satisfies ConflictPayload);
         }
       }
     });
@@ -762,17 +850,34 @@ export function initializeSocket(httpServer: HttpServer): SocketIOServer<ServerS
     // Dogrulama socket.organizations/projects listelerine DAYANMAZ: onlar
     // baglanti anindaki anlik goruntudur ve davet kabulunden sonra bayat kalir
     // (bu handler'larin var olma sebebi de zaten o).
+    //
+    // Her join ISTEGE BAGLI bir ack (onay) callback'i kabul eder. Bunun iki
+    // sebebi var:
+    //   1. Katilim asenkron ve DB'ye bagli (uzak Supabase'te ~140ms, kart icin
+    //      3 sorgu ~450ms). Ack olmadan cagiran tarafin elinde "yeterince
+    //      bekle" tahmininden baska bir sey yok - socket-authorization
+    //      testinin 300/400ms'lik uykularla flake vermesinin sebebi tam
+    //      buydu (yuk altinda sorgu uykudan uzun suruyor, yayin kaciriliyor).
+    //   2. Reddedilen katilim ISTEMCIYE sessiz kaliyordu: frontend odaya
+    //      giremedigini hic ogrenemiyor, sadece "hicbir canli guncelleme
+    //      gelmiyor" olarak yasiyordu. Ack ile artik ayirt edilebilir.
+    // Ack callback'i gondermeyen eski istemciler etkilenmez (typeof kontrolu).
+    type JoinAck = (sonuc: { ok: boolean; reason?: string }) => void;
+    const cevapla = (ack: unknown, sonuc: { ok: boolean; reason?: string }) => {
+      if (typeof ack === "function") (ack as JoinAck)(sonuc);
+    };
 
-    socket.on("join:project", async (projectId: string) => {
-      if (!projectId || !socket.userId) return;
+    socket.on("join:project", async (projectId: string, ack?: JoinAck) => {
+      if (!projectId || !socket.userId) return cevapla(ack, { ok: false, reason: "INVALID" });
       if (!(await canAccessProject(socket.userId, projectId))) {
         console.warn(`[SOCKET] Yetkisiz join:project reddedildi — user:${socket.userId} project:${projectId}`);
-        return;
+        return cevapla(ack, { ok: false, reason: "FORBIDDEN" });
       }
       socket.join(`project:${projectId}`);
       if (socket.projects && !socket.projects.includes(projectId)) {
         socket.projects.push(projectId);
       }
+      cevapla(ack, { ok: true });
     });
 
     socket.on("leave:project", (projectId: string) => {
@@ -780,25 +885,27 @@ export function initializeSocket(httpServer: HttpServer): SocketIOServer<ServerS
     });
 
     // Davet kabul edildiginde yeniden baglanmadan odaya girebilmek icin
-    socket.on("join:org", async (organizationId: string) => {
-      if (!organizationId || !socket.userId) return;
+    socket.on("join:org", async (organizationId: string, ack?: JoinAck) => {
+      if (!organizationId || !socket.userId) return cevapla(ack, { ok: false, reason: "INVALID" });
       if (!(await canAccessOrganization(socket.userId, organizationId))) {
         console.warn(`[SOCKET] Yetkisiz join:org reddedildi — user:${socket.userId} org:${organizationId}`);
-        return;
+        return cevapla(ack, { ok: false, reason: "FORBIDDEN" });
       }
       socket.join(`org:${organizationId}`);
       if (socket.organizations && !socket.organizations.includes(organizationId)) {
         socket.organizations.push(organizationId);
       }
+      cevapla(ack, { ok: true });
     });
 
-    socket.on("join:card", async (cardId: string) => {
-      if (!cardId || !socket.userId) return;
+    socket.on("join:card", async (cardId: string, ack?: JoinAck) => {
+      if (!cardId || !socket.userId) return cevapla(ack, { ok: false, reason: "INVALID" });
       if (!(await canAccessCard(socket.userId, cardId))) {
         console.warn(`[SOCKET] Yetkisiz join:card reddedildi — user:${socket.userId} card:${cardId}`);
-        return;
+        return cevapla(ack, { ok: false, reason: "FORBIDDEN" });
       }
       socket.join(`card:${cardId}`);
+      cevapla(ack, { ok: true });
     });
 
     socket.on("leave:card", (cardId: string) => {
@@ -811,6 +918,14 @@ export function initializeSocket(httpServer: HttpServer): SocketIOServer<ServerS
   // yeni sinyal hic gelmez ve rozet panoda asili kalirdi.
   // unref(): bu zamanlayici surecin kapanmasini geciktirmesin.
   setInterval(sweepStalePresence, PRESENCE_SWEEP_MS).unref();
+
+  // Suresi dolmus / kullanicisi silinmis oturumlari periyodik olarak dusur.
+  // Tarama DB'ye gittigi icin hatasi surekliligi bozmasin diye yutuluyor.
+  setInterval(() => {
+    void sweepExpiredSessions().catch((error) => {
+      console.error("[SOCKET] Oturum taramasi hatasi:", error);
+    });
+  }, SESSION_SWEEP_MS).unref();
 
   console.log("[SOCKET] Socket.io sunucusu baslatildi");
   return io;
@@ -854,6 +969,100 @@ export function broadcastToCard(cardId: string, event: SocketEventName, data: un
   (ioServer.to(`card:${cardId}`).emit as (event: string, data: unknown) => void)(event, data);
 }
 
+
+// ─── Yetki Iptalinin Canli Baglantilara Yansitilmasi ───────────────────
+// Oda uyeligi SADECE handshake aninda hesaplaniyordu ve bir daha hic
+// tazelenmiyordu: org'dan/projeden cikarilan kullanici REST'te 403 alirken
+// acik socket'i `org:<id>` / `project:<id>` odalarinda kaliyor ve kart, yorum,
+// sohbet olaylarini baglanti kopana kadar (pingInterval ile saatlerce)
+// okumaya devam ediyordu. Asagidaki yardimcilar yetki iptalini canli
+// baglantiya da uygular; uyeligi degistiren servisler bunlari cagirir.
+//
+// Odadan cikarmanin yaninda socket.organizations/socket.projects listeleri de
+// temizleniyor: chat:typing ve presence:typing kontrolleri oda uyeliginin
+// yaninda BU listelere de bakiyor, sadece leave() yayin yetkisini kapatmiyor.
+//
+// Tek Node process varsayimi globalThis.__io ile ayni gerekceye dayaniyor;
+// bu yuzden yerel socket listesi uzerinden calisiliyor.
+function yereldekiSocketler(userId?: string): AuthenticatedSocket[] {
+  const ioServer = getIO();
+  if (!ioServer) return [];
+  const hepsi = Array.from(ioServer.sockets.sockets.values()) as unknown as AuthenticatedSocket[];
+  return userId ? hepsi.filter((s) => s.userId === userId) : hepsi;
+}
+
+// Kart odalari (join:card) proje odasindan bagimsiz calisiyor: proje odasindan
+// cikmak tek basina yorum/ek/checklist olaylarini kesmiyor. Socket'in icinde
+// bulundugu kart odalarindan kapsama girenler tek sorguda bulunup terk edilir.
+async function kartOdalariniTerkEt(
+  socket: AuthenticatedSocket,
+  kapsam: { organizationId?: string; projectId?: string },
+) {
+  const kartIdleri = [...socket.rooms].filter((r) => r.startsWith("card:")).map((r) => r.slice(5));
+  if (kartIdleri.length === 0) return;
+
+  const kartlar = await prisma.card.findMany({
+    where: {
+      id: { in: kartIdleri },
+      column: kapsam.projectId
+        ? { projectId: kapsam.projectId }
+        : { project: { organizationId: kapsam.organizationId } },
+    },
+    select: { id: true },
+  });
+  for (const kart of kartlar) socket.leave(`card:${kart.id}`);
+}
+
+export async function evictFromProject(projectId: string, userId: string) {
+  for (const socket of yereldekiSocketler(userId)) {
+    socket.leave(`project:${projectId}`);
+    if (socket.projects) socket.projects = socket.projects.filter((id) => id !== projectId);
+    await kartOdalariniTerkEt(socket, { projectId });
+  }
+}
+
+export async function evictFromOrganization(organizationId: string, userId: string) {
+  const socketler = yereldekiSocketler(userId);
+  if (socketler.length === 0) return;
+
+  const projeler = await prisma.project.findMany({
+    where: { organizationId },
+    select: { id: true },
+  });
+  const projeIdleri = new Set(projeler.map((p) => p.id));
+
+  for (const socket of socketler) {
+    socket.leave(`org:${organizationId}`);
+    if (socket.organizations) {
+      socket.organizations = socket.organizations.filter((id) => id !== organizationId);
+    }
+    for (const projeId of projeIdleri) socket.leave(`project:${projeId}`);
+    if (socket.projects) socket.projects = socket.projects.filter((id) => !projeIdleri.has(id));
+    await kartOdalariniTerkEt(socket, { organizationId });
+  }
+}
+
+// Cagiran servislerde okunusu daha dogal olan takma ad (userId once).
+export function evictUserFromOrgRooms(userId: string, organizationId: string) {
+  return evictFromOrganization(organizationId, userId);
+}
+
+// Gorunurluk daraltildiginda (ORG -> TEAM/PRIVATE) kimin erisimini
+// kaybettigi tek tek belli degil; odadaki HERKESIN erisimi REST ile ayni
+// kurala (checkProjectAccess) gore yeniden hesaplanir.
+export async function revalidateProjectRoom(projectId: string) {
+  const oda = `project:${projectId}`;
+  const kaybedenler = new Set<string>();
+
+  for (const socket of yereldekiSocketler()) {
+    if (!socket.userId || !socket.rooms.has(oda)) continue;
+    if (kaybedenler.has(socket.userId)) continue;
+    if (await canAccessProject(socket.userId, projectId)) continue;
+    kaybedenler.add(socket.userId);
+  }
+
+  for (const userId of kaybedenler) await evictFromProject(projectId, userId);
+}
 
 // Online/offline durumu TUM bagli istemcilere degil, yalnizca o kullanicinin
 // uyesi oldugu organizasyon odalarina yayinlanir. Global emit, hic tanimadigi
