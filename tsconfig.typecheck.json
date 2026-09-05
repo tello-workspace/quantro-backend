@@ -1,0 +1,9 @@
+{
+  // "npm run typecheck" bunu kullanir. Gerekcesi frontend'deki ayni adli
+  // dosyayla birebir ayni: temel tsconfig, Next'in ".next/dev/types" altina
+  // yazdigi tipleri programa dahil ediyor; "npm run dev" ayaktayken bu
+  // dosyalar yeniden yazilirken okunursa kaynak kodda hicbir sorun yokken
+  // sozdizimi hatasi aliniyor.
+  "extends": "./tsconfig.json",
+  "exclude": ["node_modules", "src/generated", "src/utils/LiftLog", ".next/dev"]
+}

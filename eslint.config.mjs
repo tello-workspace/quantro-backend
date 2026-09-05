@@ -11,6 +11,10 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
     "src/generated/**",
+    // Baska bir projenin (Setwise/liftlog) kazara buraya kopyalanmis tam
+    // klasoru - kendi node_modules/.next'i dahil. Bu repoda hicbir sey onu
+    // import etmiyor. tsconfig ve vitest tarafinda da disariya alindi.
+    "src/utils/LiftLog/**",
     // Yardimci script'ler ve manuel test dosyalari: CommonJS require()
     // kullanirlar (ESLint TS kurali aksini soyler). Next/React kodu
     // degiller, lint disinda tutmak dogru - kod tabaninin kendisi temiz.

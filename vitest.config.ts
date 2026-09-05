@@ -11,6 +11,10 @@ export default defineConfig({
     testTimeout: 30000,
     hookTimeout: 60000,
     setupFiles: ["./src/test/setup.ts"],
+    // Varsayilan exclude'a ek: baska bir projenin (Setwise/liftlog) kazara
+    // buraya kopyalanmis klasoru. Kendi testleri bu paketin testleriymis gibi
+    // toplanmasin.
+    exclude: ["**/node_modules/**", "**/dist/**", "src/utils/LiftLog/**"],
   },
   resolve: {
     alias: {

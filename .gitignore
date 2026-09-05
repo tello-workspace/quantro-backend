@@ -4,3 +4,9 @@ node_modules/
 .env.local
 *.tsbuildinfo
 next-env.d.ts
+
+# Baska bir projenin (Setwise/liftlog) tam kopyasi yanlislikla buraya
+# dusmus - kendi node_modules'u ve .next'iyle birlikte. Bu repoda hicbir
+# sey onu import etmiyor; tsconfig/eslint/vitest tarafinda da dislaniyor
+# (bkz. ilgili dosyalardaki notlar). Asil kopya: Masaustu/LiftLog/liftlog
+src/utils/LiftLog/
