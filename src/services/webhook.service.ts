@@ -1,8 +1,10 @@
 import crypto from "node:crypto";
+import https from "node:https";
 import { prisma } from "@/lib/prisma";
 import { NotFoundError, ForbiddenError } from "@/utils/errors";
+import { guvenliWebhookUrlDogrula, guvenliWebhookHedefiCoz, WebhookGuvenlikHatasi } from "@/utils/webhook-security";
+import type { GuvenliWebhookHedefi } from "@/utils/webhook-security";
 import { checkProjectAccess } from "@/services/access-control.service";
-import { guvenliWebhookUrlDogrula, WebhookGuvenlikHatasi } from "@/utils/webhook-security";
 import type { CreateWebhookInput, UpdateWebhookInput } from "@/schemas/webhook.schema";
 import type { WebhookEvent, Prisma } from "@prisma/client";
 
@@ -109,6 +111,10 @@ export async function updateWebhook(webhookId: string, input: UpdateWebhookInput
     }
   }
 
+  // secret'i ACIKCA select disinda birakiyoruz: select verilmezse Prisma tum
+  // alanlari doner ve PATCH yaniti (bos govdeyle bile) imzalama sirrini
+  // istemciye sizdirirdi - "sadece olusturulunca bir kez gosterilir"
+  // sozlesmesi bunu yasakliyor (bkz. createWebhook, listWebhooks).
   return prisma.outgoingWebhook.update({
     where: { id: webhookId },
     data: {
@@ -116,6 +122,7 @@ export async function updateWebhook(webhookId: string, input: UpdateWebhookInput
       events: input.events as WebhookEvent[] | undefined,
       isActive: input.isActive,
     },
+    select: { id: true, projectId: true, url: true, events: true, isActive: true, createdById: true, createdAt: true },
   });
 }
 
@@ -129,39 +136,58 @@ export async function deleteWebhook(webhookId: string, userId: string) {
   await prisma.outgoingWebhook.delete({ where: { id: webhookId } });
 }
 
-async function birKezDene(url: string, govde: string, secret: string): Promise<void> {
-  // redirect:'manual' KASITLI - bir yonlendirmeyi kontrolsuz takip etmek
-  // guvenli-dogrulanmis URL'i atlayip baska bir hedefe cikabilirdi.
-  const controller = new AbortController();
-  const zamanAsimi = setTimeout(() => controller.abort(), 8000);
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Quantro-Signature": imzala(govde, secret),
+// fetch yerine node:https KASITLI: fetch hostname'i KENDISI tekrar cozer,
+// yani guvenlik dogrulamasinin bakip onayladigi IP ile gercekten baglanilan
+// IP farkli olabilirdi (TOCTOU / DNS rebinding). https.request'in `lookup`
+// kancasi ile dogrulanan IP'ye pinliyoruz; Host basligi ve TLS SNI orijinal
+// hostname olarak kaliyor, yani karsi taraf icin hicbir sey degismiyor.
+async function birKezDene(hedef: GuvenliWebhookHedefi, govde: string, secret: string): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    let zamanAsimi: NodeJS.Timeout | undefined;
+    let bitti = false;
+    const bitir = (hata?: Error) => {
+      if (bitti) return;
+      bitti = true;
+      if (zamanAsimi) clearTimeout(zamanAsimi);
+      if (hata) reject(hata);
+      else resolve();
+    };
+
+    // Yonlendirme TAKIP EDILMIYOR - https.request zaten kendiliginden
+    // takip etmez (eski koddaki redirect:'manual' ile ayni davranis).
+    const istek = https.request(
+      {
+        hostname: hedef.url.hostname,
+        port: hedef.url.port || 443,
+        path: `${hedef.url.pathname}${hedef.url.search}`,
+        method: "POST",
+        servername: hedef.url.hostname,
+        lookup: (_hostname, _secenekler, cb) => cb(null, hedef.ip, hedef.ailesi),
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(govde),
+          "X-Quantro-Signature": imzala(govde, secret),
+        },
       },
-      body: govde,
-      redirect: "manual",
-      signal: controller.signal,
-    });
-    try {
-      // 3xx (redirect) de basarisiz sayilir - takip etmiyoruz.
-      if (res.status >= 300) {
-        throw new Error(`HTTP ${res.status}`);
+      (res) => {
+        // Govdeyi kullanmiyoruz ama okumazsak baglanti acik kalabilir -
+        // hemen iptal ederek soketi serbest birakiyoruz.
+        res.destroy();
+        const durum = res.statusCode ?? 0;
+        // 3xx (redirect) de basarisiz sayilir - takip etmiyoruz.
+        if (durum >= 300) return bitir(new Error(`HTTP ${durum}`));
+        const uzunluk = res.headers["content-length"];
+        if (uzunluk && Number(uzunluk) > MAX_YANIT_BOYUTU) {
+          return bitir(new Error("Yanıt boyutu sınırı aşıldı"));
+        }
+        bitir();
       }
-      const uzunluk = res.headers.get("content-length");
-      if (uzunluk && Number(uzunluk) > MAX_YANIT_BOYUTU) {
-        throw new Error("Yanıt boyutu sınırı aşıldı");
-      }
-    } finally {
-      // Govdeyi kullanmiyoruz ama okumazsak baglanti acik kalabilir -
-      // hemen iptal ederek soketi serbest birakiyoruz.
-      await res.body?.cancel().catch(() => {});
-    }
-  } finally {
-    clearTimeout(zamanAsimi);
-  }
+    );
+
+    zamanAsimi = setTimeout(() => istek.destroy(new Error("Webhook isteği zaman aşımına uğradı")), 8000);
+    istek.on("error", (err) => bitir(err));
+    istek.end(govde);
+  });
 }
 
 // Fire-and-forget: cagiran (card.service.ts vb.) bunu beklemeden devam eder,
@@ -182,9 +208,13 @@ export async function dispatchEvent(projectId: string, event: WebhookEvent, payl
         try {
           // DNS rebinding: kayit anindan bu ana kadar hostname'in cozdugu
           // IP degismis olabilir - HER gonderimden once TEKRAR dogrula.
-          await guvenliWebhookUrlDogrula(webhook.url);
+          // Dogrulanan IP'yi birKezDene'ye TASIYORUZ: eskiden yalnizca
+          // dogrulama yapilip IP atiliyor, baglanti ikinci bir DNS
+          // cozumlemesiyle kuruluyordu - arada cevap degisirse (rebinding)
+          // kontrol bosa cikiyordu.
+          const hedef = await guvenliWebhookHedefiCoz(webhook.url);
           const govde = govdeUret(webhook.url, event, projectId, payload);
-          await birKezDene(webhook.url, govde, webhook.secret);
+          await birKezDene(hedef, govde, webhook.secret);
           await prisma.webhookDelivery.update({
             where: { id: delivery.id },
             data: { status: "SUCCESS", attempts: deneme + 1, deliveredAt: new Date() },
@@ -199,6 +229,15 @@ export async function dispatchEvent(projectId: string, event: WebhookEvent, payl
             });
             return;
           }
+          // Ara denemeler DB'ye hic yazilmadigi icin, surec bekleme
+          // sirasinda olur/uyursa (deploy, restart, Render uykusu) kayit
+          // attempts=0 + lastError=null halinde sonsuza dek PENDING kalip
+          // "olu mektup" gorunurlugunu yok ediyordu. Her basarisiz
+          // denemeden HEMEN sonra sayaci ve son hatayi yaziyoruz; bu
+          // yazma patlarsa da tekrar dongusunu bozmasin diye yutuluyor.
+          await prisma.webhookDelivery
+            .update({ where: { id: delivery.id }, data: { attempts: deneme + 1, lastError: mesaj } })
+            .catch(() => {});
           await new Promise((r) => setTimeout(r, GERI_CEKILME_MS[deneme] ?? 30000));
         }
       }

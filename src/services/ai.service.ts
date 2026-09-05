@@ -4,6 +4,7 @@ import * as columnService from "@/services/column.service";
 import * as commentService from "@/services/comment.service";
 import { AppError } from "@/utils/errors";
 import { decryptSecret } from "@/utils/crypto";
+import { guvenliWebhookUrlDogrula } from "@/utils/webhook-security";
 
 interface ChatMessage {
   role: "system" | "user" | "assistant";
@@ -51,9 +52,32 @@ async function getProvider(userId?: string): Promise<AIProvider> {
       // kullanicinin AI ozelligi tamamen kirilmasin diye.
       const decryptedKey = decryptSecret(user.aiApiKey);
       if (decryptedKey) {
+        const varsayilanBaseUrl = user.aiProvider === "google-gemini" ? "https://generativelanguage.googleapis.com/v1beta" : "https://api.openai.com/v1";
+        let baseUrl = user.aiBaseUrl || varsayilanBaseUrl;
+
+        // GUVENLIK: SSRF - bu URL'e az sonra sunucudan POST atilacak
+        // (callOpenAIOnce/callGeminiOnce). Kayit aninda dogrulanmis olsa da
+        // (auth.service.ts:assertGuvenliAiBaseUrl) KULLANIM ANINDA tekrar
+        // dogruluyoruz: DNS rebinding'e karsi (webhook.service.ts ile ayni
+        // desen) ve bu kontrol eklenmeden once kaydedilmis olabilecek
+        // dogrulanmamis eski degerlere karsi. Basarisiz olursa kullanicinin
+        // AI ozelligini tamamen kirmak yerine global/varsayilan saglayiciya
+        // sessizce dusuyoruz.
+        if (user.aiBaseUrl) {
+          try {
+            await guvenliWebhookUrlDogrula(user.aiBaseUrl);
+          } catch (err) {
+            console.error(
+              "[AI] Kullanıcının aiBaseUrl'i güvenlik kontrolünden geçemedi, varsayılana düşülüyor:",
+              err instanceof Error ? err.message : err,
+            );
+            baseUrl = varsayilanBaseUrl;
+          }
+        }
+
         return {
           provider: user.aiProvider as AIProvider["provider"],
-          baseUrl: user.aiBaseUrl || (user.aiProvider === "google-gemini" ? "https://generativelanguage.googleapis.com/v1beta" : "https://api.openai.com/v1"),
+          baseUrl,
           apiKey: decryptedKey,
           model: user.aiModel || (user.aiProvider === "google-gemini" ? "gemini-flash-latest" : "gpt-4o-mini"),
         };

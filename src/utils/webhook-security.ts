@@ -16,9 +16,13 @@ const OZEL_IPV4_ARALIKLARI: [string, number][] = [
   ["169.254.0.0", 16], // link-local - bulut metadata servisleri burada (AWS/GCP/Azure)
   ["172.16.0.0", 12],
   ["192.0.0.0", 24],
+  ["192.0.2.0", 24], // TEST-NET-1
   ["192.168.0.0", 16],
   ["198.18.0.0", 15],
+  ["198.51.100.0", 24], // TEST-NET-2
+  ["203.0.113.0", 24], // TEST-NET-3
   ["224.0.0.0", 4], // multicast
+  ["240.0.0.0", 4], // ayrilmis + 255.255.255.255 broadcast
 ];
 
 function ipv4ToInt(ip: string): number {
@@ -52,10 +56,23 @@ function ipOzelMi(ip: string): boolean {
 
 export class WebhookGuvenlikHatasi extends Error {}
 
+// Dogrulanmis hedef: URL ile BIRLIKTE, kontrolden gecen IP. Cagiran taraf
+// baglantiyi tam bu IP'ye kurarsa (TOCTOU) dogrulama ile baglanti arasinda
+// DNS cevabinin degismesi (rebinding) bir ise yaramaz.
+export type GuvenliWebhookHedefi = { url: URL; ip: string; ailesi: 4 | 6 };
+
 // URL'i hem sozdizimi hem de cozdugu IP'ler acisindan dogrular. Redirect
 // TAKIP ETMEZ (cagiran taraf fetch'te redirect:'manual' kullanmali) - bir
 // yonlendirme kontrolsuz bir hedefe cikabilir.
 export async function guvenliWebhookUrlDogrula(urlStr: string): Promise<URL> {
+  return (await guvenliWebhookHedefiCoz(urlStr)).url;
+}
+
+// TOCTOU kapatmasi: eski hali DNS'i cozup sonucu ATIYORDU, ardindan fetch
+// IKINCI ve bagimsiz bir cozumleme yapiyordu - kontrol edilen IP ile
+// baglanilan IP ayni olmak zorunda degildi. Artik dogrulanan IP'yi de
+// donduruyoruz ki gonderim tam o adrese pinlenebilsin.
+export async function guvenliWebhookHedefiCoz(urlStr: string): Promise<GuvenliWebhookHedefi> {
   let url: URL;
   try {
     url = new URL(urlStr);
@@ -77,12 +94,12 @@ export async function guvenliWebhookUrlDogrula(urlStr: string): Promise<URL> {
     if (ipOzelMi(hostname)) {
       throw new WebhookGuvenlikHatasi("Özel/yerel IP aralığına webhook gönderilemez");
     }
-    return url;
+    return { url, ip: hostname, ailesi: net.isIP(hostname) === 6 ? 6 : 4 };
   }
 
   // Degilse COZ ve TUM sonuclari kontrol et (bir domain hem genel hem ozel
   // bir IP'ye cozulebilir - DNS rebinding'in kendisi budur).
-  let adresler: { address: string }[];
+  let adresler: { address: string; family: number }[];
   try {
     adresler = await dns.lookup(hostname, { all: true, verbatim: true });
   } catch {
@@ -93,5 +110,7 @@ export async function guvenliWebhookUrlDogrula(urlStr: string): Promise<URL> {
     throw new WebhookGuvenlikHatasi("Hostname özel/yerel bir IP'ye çözülüyor");
   }
 
-  return url;
+  // Tum sonuclar genel; ilkini pinlenecek adres olarak donduruyoruz.
+  const secilen = adresler[0];
+  return { url, ip: secilen.address, ailesi: secilen.family === 6 ? 6 : 4 };
 }

@@ -1,7 +1,9 @@
 import { NextRequest } from "next/server";
 import * as aiService from "@/services/ai.service";
 import { successResponse, errorResponse, handleApiError } from "@/utils/api-response";
-import { authenticate } from "@/middleware/auth";
+import { authenticate, AuthenticatedRequest } from "@/middleware/auth";
+import { checkAiRateLimit } from "@/middleware/rateLimit";
+import { guvenliWebhookUrlDogrula, WebhookGuvenlikHatasi } from "@/utils/webhook-security";
 import { AppError } from "@/utils/errors";
 import { z } from "zod";
 
@@ -17,6 +19,15 @@ export async function POST(request: NextRequest) {
   if (authResponse) return authResponse;
 
   try {
+    const user = (request as AuthenticatedRequest).user;
+
+    // Bu uç, diğer tüm AI uçlarının aksine hiç hız sınırından geçmiyordu:
+    // kimliği doğrulanmış herhangi bir kullanıcı sunucudan dışarıya sınırsız
+    // sayıda istek tetikleyebiliyor, aşağıdaki URL doğrulaması olsa bile
+    // deneme sayısı sınırsız kalıyordu.
+    const rateLimitError = checkAiRateLimit(user.id, "ai:test");
+    if (rateLimitError) return rateLimitError;
+
     const rawBody = await request.json();
     const result = testAiConfigSchema.safeParse(rawBody);
     if (!result.success) {
@@ -24,6 +35,24 @@ export async function POST(request: NextRequest) {
     }
 
     const { provider, apiKey, baseUrl, model } = result.data;
+
+    // GÜVENLİK (SSRF): baseUrl hiçbir doğrulamadan geçmeden doğrudan
+    // fetch(`${baseUrl}/chat/completions`) içine gidiyordu. Aynı alan profile
+    // kaydedilirken (auth.service: assertGuvenliAiBaseUrl) ve kullanım anında
+    // (ai.service: getProvider) doğrulanırken bu uç kontrolü atlıyordu; yani
+    // kullanıcı http://169.254.169.254 gibi bir iç adres verip sunucuyu kendi
+    // iç ağına/bulut metadata servisine istek atmaya zorlayabiliyordu.
+    if (baseUrl) {
+      try {
+        await guvenliWebhookUrlDogrula(baseUrl);
+      } catch (err) {
+        if (err instanceof WebhookGuvenlikHatasi) {
+          return errorResponse(`Geçersiz AI taban URL'i: ${err.message}`, 400, "VALIDATION_ERROR");
+        }
+        throw err;
+      }
+    }
+
     const testResult = await aiService.testConfiguration({ provider, apiKey, baseUrl, model });
 
     if (!testResult.success) {
