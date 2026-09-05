@@ -2,7 +2,7 @@
 // Kullanım: backend/prisma/schema.prisma olarak kaydet → npx prisma migrate dev --name init
 
 generator client {
-  provider        = "prisma-client-js"
+  provider = "prisma-client-js"
 }
 
 datasource db {
@@ -112,7 +112,6 @@ enum AutomationActionType {
   CREATE_CARD // SCHEDULED tetikleyicisiyle: actionColumnId'ye actionMessage basligiyla yeni kart acar
 }
 
-
 enum CustomFieldType {
   TEXT
   NUMBER
@@ -157,11 +156,11 @@ enum InvitationStatus {
 // ---------- MODELS ----------
 
 model User {
-  id           String    @id @default(cuid())
-  name         String
-  email        String    @unique
-  passwordHash String
-  createdAt    DateTime  @default(now())
+  id              String    @id @default(cuid())
+  name            String
+  email           String    @unique
+  passwordHash    String
+  createdAt       DateTime  @default(now())
   // null = email dogrulanmamis, giris engellenir. Google/Apple gibi OAuth
   // saglayicilar email'i kendisi dogruladigi icin oauthLogin'de otomatik set edilir.
   emailVerifiedAt DateTime?
@@ -169,29 +168,29 @@ model User {
   // Profil bilgileri: kullanici kendi doldurur. AI, gorev atarken (chat'teki
   // otomatik atama ve "AI ile Doldur") bu alanlari Badge'lerle birlikte
   // kullanarak icerige en uyumlu kisiyi onerir.
-  title           String?
-  bio             String?
-  experience      String? // serbest metin: "2 yıl 3 ay", "6 ay", "Yeni başladım" vb.
-  githubUrl       String?
-  linkedinUrl     String?
+  title       String?
+  bio         String?
+  experience  String? // serbest metin: "2 yıl 3 ay", "6 ay", "Yeni başladım" vb.
+  githubUrl   String?
+  linkedinUrl String?
 
   // GitHub senkronundan gelen alanlar. Kullanicinin ELLE doldurdugu alanlardan
   // AYRI tutuluyorlar: bunlar GitHub'a ait olgular, karsiliklarinda kullanici
   // girdisi yok, bu yuzden her senkronda guvenle uzerine yazilabiliyorlar.
   // Ayni veriyi title/bio gibi ortak alanlara sikistirsaydik senkron ya
   // kullanicinin yazdigini ezerdi ya da veriyi atmak zorunda kalirdi.
-  githubUsername  String?
-  company         String?
-  location        String?
-  publicRepos     Int?
-  githubSyncedAt  DateTime?
-  expertiseAreas  String[] @default([])
-  languages       String[] @default([])
+  githubUsername     String?
+  company            String?
+  location           String?
+  publicRepos        Int?
+  githubSyncedAt     DateTime?
+  expertiseAreas     String[]  @default([])
+  languages          String[]  @default([])
   // Supabase Storage'daki genel (public) "avatars" bucket'ina yuklenmis
   // fotografin tam URL'i - CardAttachment'tan farkli olarak imzali URL
   // gerekmiyor, profil fotografi zaten herkese acik gosterilecek bir sey.
-  avatarUrl       String?
-  language        String   @default("tr")
+  avatarUrl          String?
+  language           String    @default("tr")
   // Sabah 08:00 gunluk ozet e-postasi (yaklasan teslim tarihleri + yeni
   // atanan kartlar + bekleyen talepler) - varsayilan acik, kart kendi
   // notunda bunu daha degerli buluyor ("tarih koyup kimsenin gormemesi
@@ -203,45 +202,46 @@ model User {
   // cagri ayni gun icin atlar.
   lastDigestSentAt   DateTime?
   // User-specific AI configurations
-  aiProvider      String?
-  aiApiKey        String?
-  aiBaseUrl       String?
-  aiModel         String?
+  aiProvider         String?
+  aiApiKey           String?
+  aiBaseUrl          String?
+  aiModel            String?
 
-  passwordResetTokens      PasswordResetToken[]
-  emailVerificationTokens  EmailVerificationToken[]
-  apiTokens                ApiToken[]
+  passwordResetTokens     PasswordResetToken[]
+  emailVerificationTokens EmailVerificationToken[]
+  apiTokens               ApiToken[]
 
-  ownedOrganizations      Organization[]           @relation("OrganizationOwner")
-  organizationMemberships OrganizationMember[]
-  ownedProjects           Project[]                @relation("ProjectOwner")
-  createdCards            Card[]                   @relation("CardCreator")
-  assignedCards           CardAssignee[]
-  comments                Comment[]
-  activities              Activity[]
-  notifications           Notification[]
-  notificationPrefs       UserNotificationPref[]
-  sentInvitations         OrganizationInvitation[] @relation("InvitationSender")
-  receivedInvitations     OrganizationInvitation[] @relation("InvitationReceiver")
-  chatMessages            ChatMessage[]
-  changeRequests          ChangeRequest[]          @relation("ChangeRequestRequester")
-  reviewedRequests        ChangeRequest[]          @relation("ChangeRequestReviewer")
-  badges                  UserBadge[]
-  uploadedAttachments     CardAttachment[]
-  createdAutomationRules  AutomationRule[]
-  createdCardTemplates    CardTemplate[]
-  createdProjectTemplates ProjectTemplate[]
-  createdWebhooks         OutgoingWebhook[]
-  watchedCards            CardWatcher[]
+  ownedOrganizations       Organization[]           @relation("OrganizationOwner")
+  organizationMemberships  OrganizationMember[]
+  ownedProjects            Project[]                @relation("ProjectOwner")
+  createdCards             Card[]                   @relation("CardCreator")
+  assignedCards            CardAssignee[]
+  comments                 Comment[]
+  activities               Activity[]
+  notifications            Notification[]
+  notificationPrefs        UserNotificationPref[]
+  sentInvitations          OrganizationInvitation[] @relation("InvitationSender")
+  receivedInvitations      OrganizationInvitation[] @relation("InvitationReceiver")
+  chatMessages             ChatMessage[]
+  changeRequests           ChangeRequest[]          @relation("ChangeRequestRequester")
+  reviewedRequests         ChangeRequest[]          @relation("ChangeRequestReviewer")
+  badges                   UserBadge[]
+  uploadedAttachments      CardAttachment[]
+  createdAutomationRules   AutomationRule[]
+  createdCardTemplates     CardTemplate[]
+  createdProjectTemplates  ProjectTemplate[]
+  createdWebhooks          OutgoingWebhook[]
+  watchedCards             CardWatcher[]
   uploadedProjectDocuments ProjectDocument[]
-  archivedCards           Card[]                   @relation("CardArchivedBy")
-  savedViews              SavedView[]
-  resolvedComments        Comment[]                @relation("CommentResolvedBy")
-  commentReactions        CommentReaction[]
-  timeLogs                TimeLog[]
-  projectMemberships      ProjectMember[]
-  sentMails               Mail[]                   @relation("MailSender")
-  receivedMails           MailRecipient[]           @relation("MailRecipientUser")
+  archivedCards            Card[]                   @relation("CardArchivedBy")
+  savedViews               SavedView[]
+  resolvedComments         Comment[]                @relation("CommentResolvedBy")
+  commentReactions         CommentReaction[]
+  timeLogs                 TimeLog[]
+  projectMemberships       ProjectMember[]
+  sentMails                Mail[]                   @relation("MailSender")
+  receivedMails            MailRecipient[]          @relation("MailRecipientUser")
+  createdGithubLinks       GithubRepoLink[]
 }
 
 // ---------- ORGANIZATION ----------
@@ -321,7 +321,7 @@ model ChangeRequest {
 // ayni desen: referans verilen etiket/kolon/kullanici silinirse kural calisirken
 // sessizce atlanir, DB seviyesinde bir bagimlilik kilidi olusturmaz.
 model AutomationRule {
-  id              String                @id @default(cuid())
+  id              String               @id @default(cuid())
   projectId       String
   name            String
   trigger         AutomationTrigger
@@ -331,9 +331,9 @@ model AutomationRule {
   actionColumnId  String? // MOVE_TO_COLUMN
   actionUserId    String? // ASSIGN_USER / SEND_NOTIFICATION hedefi
   actionMessage   String? // SEND_NOTIFICATION icin ozel mesaj, CREATE_CARD icin yeni kartin basligi
-  isActive        Boolean               @default(true)
+  isActive        Boolean              @default(true)
   createdById     String
-  createdAt       DateTime              @default(now())
+  createdAt       DateTime             @default(now())
 
   // SCHEDULED tetikleyici: gece taramasi (her gun 03:00) calistiginda gunun
   // gunu eslesirse (0=Pazar..6=Cumartesi) tetiklenir; null = her gun.
@@ -416,15 +416,15 @@ model OrganizationMember {
 // Orn: Backend, Frontend, DevOps, UI/UX, PLC Expert.
 // Organizasyon bazlidir — her org kendi rozetlerini olusturur.
 model Badge {
-  id             String     @id @default(cuid())
+  id             String   @id @default(cuid())
   organizationId String
-  name           String     // "Backend", "Frontend" vb.
-  color          String     // hex renk: "#3B82F6"
-  icon           String?    // emoji: "⚙️", opsiyonel
-  createdAt      DateTime   @default(now())
+  name           String // "Backend", "Frontend" vb.
+  color          String // hex renk: "#3B82F6"
+  icon           String? // emoji: "⚙️", opsiyonel
+  createdAt      DateTime @default(now())
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  users         UserBadge[]
+  users        UserBadge[]
 
   @@unique([organizationId, name])
   @@index([organizationId])
@@ -459,28 +459,29 @@ model Project {
   // atomik olarak +1'lenip okunur (Postgres'te UPDATE ... RETURNING atomiktir),
   // böylece eşzamanlı iki kart aynı numarayı almaz. Silinen numara geri
   // kullanılmaz - anahtar kalıcı bir referans, geri dönüştürülemez.
-  key            String
-  cardCounter    Int      @default(0)
-  estimateUnit   EstimateUnit @default(POINTS)
+  key          String
+  cardCounter  Int               @default(0)
+  estimateUnit EstimateUnit      @default(POINTS)
   // Varsayilan ORG: mevcut projelerin hepsi geriye donuk olarak eskisi
   // gibi (organizasyondaki herkese acik) davranmaya devam eder - bu
   // ozelligi acmadan hicbir proje aniden gizlenmez.
-  visibility     ProjectVisibility @default(ORG)
+  visibility   ProjectVisibility @default(ORG)
 
-  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  owner          User            @relation("ProjectOwner", fields: [ownerId], references: [id])
-  columns        Column[]
-  labels         Label[]
-  activities     Activity[]
-  members        ProjectMember[]
+  organization    Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  owner           User                    @relation("ProjectOwner", fields: [ownerId], references: [id])
+  columns         Column[]
+  labels          Label[]
+  activities      Activity[]
+  members         ProjectMember[]
   // organizasyon içinde tek: "QNT-42" bir org'da tek bir kartı gösterir
-  changeRequests ChangeRequest[]
+  changeRequests  ChangeRequest[]
   automationRules AutomationRule[]
   cardTemplates   CardTemplate[]
   customFields    CustomFieldDefinition[]
   documents       ProjectDocument[]
   savedViews      SavedView[]
   webhooks        OutgoingWebhook[]
+  githubLink      GithubRepoLink?
 
   @@unique([organizationId, key])
 }
@@ -515,8 +516,8 @@ model OutgoingWebhook {
   createdById String
   createdAt   DateTime       @default(now())
 
-  project    Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  createdBy  User                @relation(fields: [createdById], references: [id])
+  project    Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy  User              @relation(fields: [createdById], references: [id])
   deliveries WebhookDelivery[]
 
   @@index([projectId])
@@ -641,40 +642,40 @@ enum ColumnRuleMode {
 }
 
 model Card {
-  id             String    @id @default(cuid())
-  columnId       String
+  id              String    @id @default(cuid())
+  columnId        String
   // Proje içinde artan sıra numarası. Görünen anahtar: <project.key>-<number>
   // ("QNT-42"). Numara Project.cardCounter'dan atomik olarak alınır
   // (card-key.service.ts). Kartın projesi Column üzerinden bulunuyor, bu
   // yüzden veritabanı seviyesinde (projectId, number) tekilliği kurulamıyor;
   // tekilliği sayaç garanti ediyor.
-  number         Int
-  title          String
-  description    String?
-  creatorId      String
-  priority       Priority  @default(MEDIUM)
-  type           CardType  @default(TASK)
+  number          Int
+  title           String
+  description     String?
+  creatorId       String
+  priority        Priority  @default(MEDIUM)
+  type            CardType  @default(TASK)
   // Efor tahmini - birimi (puan/saat) Project.estimateUnit belirler. Daha
   // once "storyPoints" olarak vardi, kullanimi sifirken kaldirilmisti
   // (20260804095500_remove_sprint_and_story_points) - bu kez kolon
   // basliginda toplam ve is yuku raporuna (insight.service.ts) gercekten
   // baglaniyor, olu alan olarak kalmiyor.
-  estimate       Int?
+  estimate        Int?
   // Zaman takibi (Card.estimate'ten AYRI bir eksen - o kaba boyutlandirma/
   // kapasite plani icin, bu gercek saat/dakika). estimateMinutes elle
   // girilir. spentMinutes, TimeLog kayitlarinin toplaminin ONBELLEGI - her
   // okumada SUM() atmamak icin log eklenince/silininde burada guncellenir.
   estimateMinutes Int?
   spentMinutes    Int       @default(0)
-  dueDate        DateTime?
-  startDate      DateTime?
-  position       Float
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
-  isArchived     Boolean   @default(false) // soft-delete: arsivlenen kart silinmez, listelerden gizlenir
-  archivedAt     DateTime?
-  archivedById   String? // arsiv ekraninda "kim arsivledi" gostermek icin - geri yuklerken temizlenir
-  lastActivityAt DateTime  @default(now()) // STALE MOTORUNUN KALBİ:
+  dueDate         DateTime?
+  startDate       DateTime?
+  position        Float
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  isArchived      Boolean   @default(false) // soft-delete: arsivlenen kart silinmez, listelerden gizlenir
+  archivedAt      DateTime?
+  archivedById    String? // arsiv ekraninda "kim arsivledi" gostermek icin - geri yuklerken temizlenir
+  lastActivityAt  DateTime  @default(now()) // STALE MOTORUNUN KALBİ:
   // karta dokunan her işlem (taşıma, yorum, düzenleme, atama) bunu now() yapar.
   // Gece cron'u: lastActivityAt < now-7gün && column.isDone == false → stale
 
@@ -690,8 +691,8 @@ model Card {
   comments          Comment[]
   labels            CardLabel[]
   assignees         CardAssignee[]
-  blocking          CardDependency[] @relation("Blocker") // bu kartın blokladıkları
-  blockedBy         CardDependency[] @relation("Blocked") // bu kartı bloklayanlar
+  blocking          CardDependency[]       @relation("Blocker") // bu kartın blokladıkları
+  blockedBy         CardDependency[]       @relation("Blocked") // bu kartı bloklayanlar
   activities        Activity[]
   notifications     Notification[]
   changeRequests    ChangeRequest[]
@@ -702,6 +703,7 @@ model Card {
   watchers          CardWatcher[]
   timeLogs          TimeLog[]
   recurrenceRules   AutomationRule[]       @relation("AutomationSourceCard")
+  githubLinks       GithubCardLink[]
 
   @@index([columnId])
   @@index([lastActivityAt]) // cron taraması hızlı olsun
@@ -713,14 +715,14 @@ model Card {
 // timer BILEREK yok - sekme kapanmasi, birden fazla cihaz, unutulan timer
 // bambaska bir problem sinifi (kartin kendi onerisi: once manuel).
 model TimeLog {
-  id       String   @id @default(cuid())
-  cardId   String
-  userId   String
-  minutes  Int
-  note     String?
+  id        String   @id @default(cuid())
+  cardId    String
+  userId    String
+  minutes   Int
+  note      String?
   // Isin YAPILDIGI gun (geriye donuk girise izin verir - "dun 2 saat
   // calistim" gibi) - createdAt kaydin sisteme girildigi an, ikisi farkli.
-  loggedAt DateTime @default(now())
+  loggedAt  DateTime @default(now())
   createdAt DateTime @default(now())
 
   card Card @relation(fields: [cardId], references: [id], onDelete: Cascade)
@@ -989,19 +991,19 @@ model ApiToken {
 // handleApiError() üzerinden buraya yazar; validasyon/yetki gibi beklenen
 // hatalar (400/401/403/404) burada YOK — sadece gerçek 500'ler loglanır.
 model ErrorLog {
-  id         String   @id @default(cuid())
-  message    String
-  stack      String?
-  method     String
-  path       String
-  statusCode Int      @default(500)
-  userId     String?
+  id             String   @id @default(cuid())
+  message        String
+  stack          String?
+  method         String
+  path           String
+  statusCode     Int      @default(500)
+  userId         String?
   // Hatanin hangi organizasyon baglaminda olustugu. Global admin yok;
   // adminler yalnizca kendi org'larinin hata kayitlarini gorebilsin diye
   // eklendi (org bazli izolasyon). HandleApiError, istek kimlik dogrulamasi
   // gecmisse ve org baglami biliniyorsa doldurur.
   organizationId String?
-  createdAt  DateTime @default(now())
+  createdAt      DateTime @default(now())
 
   @@index([createdAt])
 }
@@ -1047,7 +1049,7 @@ model Notification {
 model UserNotificationPref {
   userId  String
   type    NotificationType
-  enabled Boolean @default(false) // false = bu tip sessize alindi
+  enabled Boolean          @default(false) // false = bu tip sessize alindi
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -1124,4 +1126,96 @@ model MailAttachment {
   mail Mail @relation(fields: [mailId], references: [id], onDelete: Cascade)
 
   @@index([mailId])
+}
+
+// ─── GitHub Entegrasyonu ────────────────────────────────────────────────
+//
+// Yon: GitHub -> Quantro. Depoda olan biten (branch push'u, PR acilmasi,
+// PR merge'i) commit/branch/PR metnindeki kart anahtari uzerinden
+// ("QNT-42", bkz. card-key.service.ts) karti otomatik tasir.
+//
+// Kurulum GitHub App ile DEGIL, depo webhook'u + secret ile yapiliyor:
+// disariya bir uygulama kaydi ve private key yonetimi getirmiyor. Yine de
+// App'e gecis yolu acik biraksin diye installationId alani simdiden var ve
+// bugun her zaman null.
+
+model GithubRepoLink {
+  id        String  @id @default(cuid())
+  // v1'de bir proje = bir depo. Iliski @unique oldugu icin ikinci bir depo
+  // baglamak semada engelli - coklu depo istenirse bu kisit kaldirilir.
+  projectId String  @unique
+  owner     String // "merto"
+  repo      String // "quantro-backend"
+  // HMAC-SHA256 dogrulamasi SIMETRIK: gelen imzayi yeniden hesaplamak icin
+  // sirrin kendisi gerekiyor, hash'i ise yaramaz. OutgoingWebhook.secret ile
+  // ayni gerekce. Disari yalnizca olusturuldugu anda bir kez gosteriliyor.
+  secret    String
+  isActive  Boolean @default(true)
+
+  // Olay -> hedef kolon eslemesi. Hepsi opsiyonel: null olan olayda tasima
+  // yapilmaz (bag yine kaydedilir), boylece ozellik kismen acilabiliyor -
+  // ornegin yalnizca "merge olunca Done'a tasi".
+  branchColumnId   String?
+  prOpenColumnId   String?
+  prMergedColumnId String?
+
+  // GitHub App'e gecilirse installation kimligi burada durur; depo webhook'u
+  // yolunda anlami yok.
+  installationId String?
+
+  createdById String
+  createdAt   DateTime @default(now())
+
+  project   Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy User                 @relation(fields: [createdById], references: [id])
+  cardLinks GithubCardLink[]
+  events    GithubWebhookEvent[]
+
+  @@index([owner, repo])
+}
+
+// Kart <-> branch/PR bagi. Kart detayinda "bu isi hangi PR kapatti"
+// rozetini gostermek ve PR durumunu (open/merged) izlemek icin.
+model GithubCardLink {
+  id          String         @id @default(cuid())
+  cardId      String
+  repoLinkId  String
+  kind        GithubLinkKind
+  // BRANCH icin dal adi ("feat/QNT-42-mail"), PULL_REQUEST icin PR numarasi ("17").
+  reference   String
+  title       String?
+  url         String
+  state       String? // open | closed | merged
+  authorLogin String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  card     Card           @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  repoLink GithubRepoLink @relation(fields: [repoLinkId], references: [id], onDelete: Cascade)
+
+  // Ayni PR ayni karta iki kez baglanmasin; upsert'in anahtari.
+  @@unique([repoLinkId, kind, reference, cardId])
+  @@index([cardId])
+}
+
+// Teslimat tekillestirmesi. GitHub, 2xx alamadigi teslimatlari yeniden
+// deniyor ve kullanici webhook ekranindan "Redeliver" diyebiliyor; koruma
+// olmadan ayni merge, karti tekrar tasiyip ikinci bir bildirim uretirdi.
+model GithubWebhookEvent {
+  id         String   @id @default(cuid())
+  repoLinkId String
+  deliveryId String // X-GitHub-Delivery
+  event      String
+  receivedAt DateTime @default(now())
+
+  repoLink GithubRepoLink @relation(fields: [repoLinkId], references: [id], onDelete: Cascade)
+
+  @@unique([repoLinkId, deliveryId])
+  // Eski kayitlarin budanmasi icin (tablo suresiz buyumemeli).
+  @@index([receivedAt])
+}
+
+enum GithubLinkKind {
+  BRANCH
+  PULL_REQUEST
 }
