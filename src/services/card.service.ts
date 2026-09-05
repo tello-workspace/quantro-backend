@@ -255,6 +255,21 @@ export async function getCardById(cardId: string, userId: string) {
       customFieldValues: {
         include: { field: { select: { id: true, name: true, type: true, options: true } } },
       },
+      // Bagli branch/PR rozetleri. Kart detayina gomuluyor cunku ayri bir uc
+      // her kart acilisinda ikinci bir gidis-donus demek olurdu; liste kart
+      // basina birkac kayittan ibaret.
+      githubLinks: {
+        select: {
+          id: true,
+          kind: true,
+          reference: true,
+          title: true,
+          url: true,
+          state: true,
+          authorLogin: true,
+        },
+        orderBy: { updatedAt: "desc" },
+      },
     },
   });
 

@@ -211,12 +211,37 @@ function globalBucketIdentity(request: NextRequest): string {
   return `ip:${getClientIp(request)}`;
 }
 
-// auth/* ve ai/* kendi (daha dar) limitlerine sahip; onlari burada tekrar
-// saymak ayni istegi iki kovaya yazmak olurdu.
-const OWN_LIMIT_PATHS = /^\/api\/(auth|ai)\//;
+// auth/*, ai/* ve integrations/* kendi (daha dar ya da farkli anahtarli)
+// limitlerine sahip; onlari burada tekrar saymak ayni istegi iki kovaya
+// yazmak olurdu.
+const OWN_LIMIT_PATHS = /^\/api\/(auth|ai|integrations)\//;
 
 export function hasOwnRateLimit(pathname: string): boolean {
   return OWN_LIMIT_PATHS.test(pathname);
+}
+
+// ---------------------------------------------------------------------------
+// GITHUB WEBHOOK
+// ---------------------------------------------------------------------------
+// Genel kovaya birakilamaz: GitHub'dan gelen isteklerin JWT'si yok, dolayisiyla
+// hepsi IP kovasina duserdi. GitHub'in cikis IP havuzu hem genis hem degisken -
+// tek IP'ye bakan sayim ya bos yere gevser ya da aktif bir depo tum
+// organizasyonu global yazma kovasindan disari iterdi.
+//
+// Anahtar linkId: sinir "depo basina". Bir deponun yogunlugu digerini ya da
+// gercek kullanicilari etkilemiyor.
+const GITHUB_WEBHOOK_WINDOW_MS = 60 * 1000; // 1 dakika
+// Aktif bir depoda bile dakikada 60 olay cok yuksek bir tavan; asilmasi
+// normal kullanim degil dongu ya da yanlis yapilandirma demektir.
+const GITHUB_WEBHOOK_MAX = 60;
+
+export function checkGithubWebhookRateLimit(linkId: string) {
+  return consume(
+    `github:webhook:${linkId}`,
+    GITHUB_WEBHOOK_WINDOW_MS,
+    GITHUB_WEBHOOK_MAX,
+    () => "Bu depo için çok fazla olay alındı, kısa süre sonra tekrar deneyin.",
+  );
 }
 
 export function checkGlobalRateLimit(request: NextRequest) {
