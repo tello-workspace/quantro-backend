@@ -113,6 +113,38 @@ export async function getVisibleProjectIds(organizationId: string, userId: strin
   return new Set(visible.map((p) => p.id));
 }
 
+// filterVisibleProjects'in TERSI yonu: "bu kullanici hangi projeleri gorur"
+// degil, "bu projeyi hangi kullanicilar gorur". Proje ADINI iceren org-geneli
+// bildirim/socket yayinlarinin alici kumesini daraltmak icin gerekli - aksi
+// halde PRIVATE bir projenin adi, o projeyi hic goremeyecek uyelere
+// (GUEST'ler dahil) "olusturuldu/silindi" bildirimiyle sizar. Kural ikinci
+// bir yerde yeniden yazilmasin diye needsExplicitMembership'in ustune kurulu.
+export async function getProjectAudience(projectId: string): Promise<string[]> {
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: { organizationId: true, ownerId: true, visibility: true },
+  });
+  if (!project) return [];
+
+  const [members, explicitMembers] = await Promise.all([
+    prisma.organizationMember.findMany({
+      where: { organizationId: project.organizationId },
+      select: { userId: true, role: true },
+    }),
+    prisma.projectMember.findMany({ where: { projectId }, select: { userId: true } }),
+  ]);
+  const explicitIds = new Set(explicitMembers.map((m) => m.userId));
+
+  return members
+    .filter(
+      (m) =>
+        m.userId === project.ownerId ||
+        !needsExplicitMembership(m.role, project.visibility) ||
+        explicitIds.has(m.userId),
+    )
+    .map((m) => m.userId);
+}
+
 export async function checkColumnAccess(columnId: string, userId: string) {
   const column = await prisma.column.findUnique({
     where: { id: columnId },
