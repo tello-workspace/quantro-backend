@@ -628,6 +628,10 @@ model Column {
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   cards   Card[]
+
+  // Pano her acilista kolonlari projectId ile cekiyor (board.service).
+  // Index olmadan bu sorgu tum Column tablosunu tariyordu.
+  @@index([projectId])
 }
 
 enum ColumnRuleMode {
@@ -734,6 +738,10 @@ model CardAssignee {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@id([cardId, userId])
+  // Bilesik birincil anahtar cardId ile BASLIYOR, dolayisiyla "bana atanan
+  // kartlar" (dashboard.service) ve gunluk ozet gibi KULLANICIDAN baslayan
+  // sorgular onu kullanamiyor ve tam tablo tariyordu.
+  @@index([userId])
 }
 
 // Atanmamis ama karttaki gelismelerden (yorum, tasima) haberdar olmak isteyen
@@ -909,6 +917,10 @@ model CardDependency {
   blocked Card @relation("Blocked", fields: [blockedId], references: [id], onDelete: Cascade)
 
   @@id([blockerId, blockedId])
+  // Anahtar blockerId ile basliyor; "bu karti KIM blokluyor" (kolon gecis
+  // kurali requireNoOpenBlockers, kart detayi) blockedId'den sorguluyor ve
+  // index olmadan tam tablo tariyordu.
+  @@index([blockedId])
 }
 
 // Sifre sifirlama linki: HAM token e-postayla gider, DB'de sadece hash'i
