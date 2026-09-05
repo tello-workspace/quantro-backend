@@ -56,10 +56,12 @@ export async function deleteLabel(labelId: string, userId: string) {
 // --- CARD-LABEL İLİŞKİSİ ---
 
 export async function attachLabelToCard(cardId: string, labelId: string, userId: string) {
-  await checkCardAccess(cardId, userId);
+  const { projectId } = await checkCardAccess(cardId, userId);
 
-  // Etiketin varlığını kontrol et
-  const label = await prisma.label.findUnique({ where: { id: labelId } });
+  // Etiketi kartın projesiyle sınırlayarak arıyoruz: yalnızca varlığına bakmak,
+  // başka bir projenin (hatta başka organizasyonun) etiketini bu karta iliştirip
+  // adını ve rengini o panodaki herkese sızdırmaya izin veriyordu.
+  const label = await prisma.label.findFirst({ where: { id: labelId, projectId } });
   if (!label) throw new NotFoundError("Etiket");
 
   // Zaten ekli mi?
@@ -88,13 +90,9 @@ export async function removeLabelFromCard(cardId: string, labelId: string, userI
     where: { cardId_labelId: { cardId, labelId } },
   });
 
-  // Clean up label if it is no longer used by any card
-  const usageCount = await prisma.cardLabel.count({
-    where: { labelId },
-  });
-  if (usageCount === 0) {
-    await prisma.label.delete({ where: { id: labelId } }).catch((err) => {
-      console.warn(`[Label Cleanup] Orphaned label silinirken hata: ${labelId}`, err.message);
-    });
-  }
+  // Otomatik "öksüz etiket" temizliği kaldırıldı: Label proje seviyesinde
+  // bilinçli oluşturulan bir katalog kaydı. Kullanımının sıfıra düşmesi
+  // tanımın silinmesi anlamına gelmez - siliniyordu ve seçim listesinden
+  // kaybolup kayıtlı görünüm/otomasyon kurallarındaki labelId'leri kırıyordu.
+  // Etiket yalnızca açık deleteLabel çağrısıyla silinir.
 }

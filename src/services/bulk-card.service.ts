@@ -304,32 +304,13 @@ async function topluSil(
   cardIds: string[],
   sonuc: BulkResult,
 ): Promise<BulkResult> {
-  const etiketBaglari = await prisma.cardLabel.findMany({
-    where: { cardId: { in: cardIds } },
-    select: { labelId: true },
-  });
-  const etkilenenEtiketler = [...new Set(etiketBaglari.map((e) => e.labelId))];
-
   await prisma.card.deleteMany({ where: { id: { in: cardIds } } });
 
-  // Oksuz etiket temizligi: tek kartlik akis etiket basina COUNT atiyordu.
-  // Burada kalanlari tek sorguda bulup farkini siliyoruz.
-  if (etkilenenEtiketler.length > 0) {
-    const halaKullanilan = await prisma.cardLabel.findMany({
-      where: { labelId: { in: etkilenenEtiketler } },
-      select: { labelId: true },
-      distinct: ["labelId"],
-    });
-    const kullanilanKume = new Set(halaKullanilan.map((e) => e.labelId));
-    const oksuz = etkilenenEtiketler.filter((id) => !kullanilanKume.has(id));
-    if (oksuz.length > 0) {
-      await prisma.label
-        .deleteMany({ where: { id: { in: oksuz } } })
-        .catch((err) =>
-          console.warn("[Label Cleanup] Öksüz etiketler silinemedi:", err.message),
-        );
-    }
-  }
+  // Oksuz etiket temizligi kaldirildi: Label proje seviyesinde bilincli
+  // olusturulan bir katalog kaydi, kullaniminin sifira dusmesi tanimin
+  // silinmesi anlamina gelmez. Toplu silme burada en yikici haliyle
+  // calisiyordu - tek islemde projenin etiket katalogunun buyuk kismini
+  // ucuruyordu. Etiket yalnizca acik deleteLabel cagrisiyla silinir.
 
   for (const cardId of cardIds) {
     broadcastToProject(projectId, SocketEvents.CARD_DELETED, { cardId, projectId });
