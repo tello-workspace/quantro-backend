@@ -186,8 +186,27 @@ function ayristirJiraCsv(icerik: string): ParsedImport {
   return { columns, cards };
 }
 
+// Ayristirilan panonun BOYUTU icin ust sinir. import.schema.ts yalnizca METIN
+// boyutunu (5MB) siniriyor; 5MB'lik minimal bir Trello JSON'u ya da Jira CSV'si
+// on binlerce kart uretebiliyor - ustelik Jira'da her farkli Status ayri bir
+// sutun demek ve sutunlar dongude TEK TEK create ediliyor. Sinir olmadan tek
+// istek paylasilan pooler'i tuketip yarim aktarilmis bir pano birakabiliyordu.
+const MAX_IMPORT_CARDS = 2000;
+const MAX_IMPORT_COLUMNS = 50;
+
 function dosyayiAyristir(format: ImportFormat, icerik: string): ParsedImport {
-  return format === "TRELLO_JSON" ? ayristirTrelloJson(icerik) : ayristirJiraCsv(icerik);
+  const ayristirilan = format === "TRELLO_JSON" ? ayristirTrelloJson(icerik) : ayristirJiraCsv(icerik);
+  if (ayristirilan.cards.length > MAX_IMPORT_CARDS) {
+    throw new ValidationError(
+      `Tek seferde en fazla ${MAX_IMPORT_CARDS} kart içe aktarılabilir (dosyada ${ayristirilan.cards.length} kart var)`,
+    );
+  }
+  if (ayristirilan.columns.length > MAX_IMPORT_COLUMNS) {
+    throw new ValidationError(
+      `Tek seferde en fazla ${MAX_IMPORT_COLUMNS} sütun içe aktarılabilir (dosyada ${ayristirilan.columns.length} sütun var)`,
+    );
+  }
+  return ayristirilan;
 }
 
 // ------------------------------------------------------------ kullanici eslesmesi
@@ -313,6 +332,23 @@ export async function applyImport(
 
   const parsed = dosyayiAyristir(format, fileContent);
 
+  // --- 0) userMapping govdeden geliyor ve sema onu sadece "string" olarak
+  // dogruluyor; previewImport'un eslestirmesi yalnizca ONERI, apply bu degeri
+  // tekrar dogrulamak zorunda. Kontrol olmadan (a) baska bir organizasyonun
+  // kullanici id'si gonderilip o kisi hic uyesi olmadigi projedeki kartlara
+  // atanmis gorunebiliyor, (b) var olmayan bir id CardAssignee createMany'yi
+  // yabanci anahtar hatasiyla patlatiyor - kartlar/etiketler o noktada coktan
+  // yazilmis oluyordu. Yazimlardan ONCE, tek sorguda dogruluyoruz.
+  const istenenUserIdler = [...new Set(Object.values(userMapping).filter((v): v is string => !!v))];
+  if (istenenUserIdler.length > 0) {
+    const uyeSayisi = await prisma.organizationMember.count({
+      where: { organizationId, userId: { in: istenenUserIdler } },
+    });
+    if (uyeSayisi !== istenenUserIdler.length) {
+      throw new ValidationError("Eşleştirilen kullanıcılardan biri bu organizasyonun üyesi değil");
+    }
+  }
+
   // --- 1) Hedef kolonlari coz: mevcut / yeni-olustur / atla. Yeni kolon
   // sayisi tipik olarak kucuk (bir kac liste/durum) - tek tek create() kabul
   // edilebilir, kartlar gibi yuzlerce degil.
@@ -322,6 +358,22 @@ export async function applyImport(
     orderBy: { position: "desc" },
   });
   let sonPozisyon = mevcutKolonlar[0]?.position ?? 0;
+
+  // Govdeden gelen "existing" hedef sutun ID'si icin izin listesi. Bu kontrol
+  // olmadan cagiran, kendi projesine erisim yetkisiyle BASKA bir projenin
+  // (hatta baska kiracinin) sutun id'sini gonderip oraya kart yazdirabilir:
+  // kartin projesi Column uzerinden bulundugu icin ne sema (projectId,number
+  // tekilligi DB'de yok) ne de asagidaki geri-okuma bunu yakalar.
+  // Dogrulama asagidaki donguden ONCE toplu yapiliyor: dongu icinde "new"
+  // eslemeleri icin gercek kolon yaratiliyor, ortasinda hata firlatirsak
+  // yarim kalmis kolonlar geride kalirdi.
+  const projeninKolonIdleri = new Set(mevcutKolonlar.map((k) => k.id));
+  for (const kolon of parsed.columns) {
+    const esleme = columnMapping[kolon.sourceId];
+    if (esleme?.mode === "existing" && !projeninKolonIdleri.has(esleme.columnId)) {
+      throw new ValidationError("Hedef sütun bu projeye ait değil");
+    }
+  }
 
   const kaynakKolonHedefi = new Map<string, string | null>(); // sourceColumnId -> hedef columnId | null(atla)
   let olusturulanKolonSayisi = 0;
@@ -351,114 +403,135 @@ export async function applyImport(
     return { createdColumns: olusturulanKolonSayisi, createdCards: 0, createdLabels: 0, skippedCards: atlananKartSayisi };
   }
 
-  // --- 2) Kart numaralarini TEK sayac artisiyla topluca ayir (bkz. dosya basi not).
-  const guncelProje = await prisma.project.update({
-    where: { id: projectId },
-    data: { cardCounter: { increment: alinacakKartlar.length } },
-    select: { cardCounter: true },
-  });
-  const ilkNumara = guncelProje.cardCounter - alinacakKartlar.length + 1;
-
-  // --- 3) Hedef kolon basina baslangic pozisyonunu bir kez oku.
-  const hedefKolonIdleri = [...new Set([...kaynakKolonHedefi.values()].filter((v): v is string => !!v))];
-  const kolonSonPozisyonlari = await prisma.column.findMany({
-    where: { id: { in: hedefKolonIdleri } },
-    select: { id: true, cards: { orderBy: { position: "desc" }, take: 1, select: { position: true } } },
-  });
-  const pozisyonSayaci = new Map<string, number>(
-    kolonSonPozisyonlari.map((k) => [k.id, k.cards[0]?.position ?? 0]),
-  );
-
-  const cardsData: Prisma.CardCreateManyInput[] = alinacakKartlar.map((kart, i) => {
-    const hedefKolon = kaynakKolonHedefi.get(kart.sourceColumnId)!;
-    const pozisyon = (pozisyonSayaci.get(hedefKolon) ?? 0) + 1;
-    pozisyonSayaci.set(hedefKolon, pozisyon);
-    return {
-      columnId: hedefKolon,
-      number: ilkNumara + i,
-      title: kart.title,
-      description: kart.description,
-      creatorId: userId,
-      priority: kart.priority ?? "MEDIUM",
-      position: pozisyon,
-    };
-  });
-
-  await prisma.card.createMany({ data: cardsData });
-
-  // --- 4) Yeni kartlarin id'lerini numaradan TEK sorguda geri oku (numara
-  // proje icinde tekil - sayaçtan geliyor).
-  const olusanKartlar = await prisma.card.findMany({
-    where: { column: { projectId }, number: { gte: ilkNumara, lte: ilkNumara + alinacakKartlar.length - 1 } },
-    select: { id: true, number: true },
-  });
-  const idByNumara = new Map(olusanKartlar.map((k) => [k.number, k.id]));
-
-  // --- 5) Etiketler: eksik olanlari topluca olustur, hepsini isimden id'ye
-  // TEK sorguda coz, sonra kart-etiket baglantilarini TEK createMany ile ekle.
-  const tumEtiketAdlari = [...new Set(alinacakKartlar.flatMap((k) => k.labels))];
-  let olusturulanEtiketSayisi = 0;
-  if (tumEtiketAdlari.length > 0) {
-    const mevcutEtiketler = await prisma.label.findMany({
-      where: { projectId, name: { in: tumEtiketAdlari } },
-      select: { id: true, name: true },
-    });
-    const mevcutAdlar = new Set(mevcutEtiketler.map((e) => e.name));
-    const eksikAdlar = tumEtiketAdlari.filter((ad) => !mevcutAdlar.has(ad));
-    if (eksikAdlar.length > 0) {
-      const renkler = ["#EF4444", "#F97316", "#EAB308", "#22C55E", "#3B82F6", "#8B5CF6", "#EC4899"];
-      await prisma.label.createMany({
-        data: eksikAdlar.map((ad, i) => ({ projectId, name: ad, color: renkler[i % renkler.length] })),
+  // --- 2-7) Sayac artisindan checklist yazimina kadar TUM adimlar TEK
+  // transaction'da. Onceden her adim ayri kosuyordu: ortada dusen bir hata
+  // (or. pooler kopmasi) kartlari yazilmis ama checklist'i/atamasi eksik bir
+  // pano ve tuketilmis bir kart sayaci birakiyor, kullanici "tekrar dene"
+  // dediginde ayni kartlar ikinci kez ekleniyordu. Artik ya hepsi ya hicbiri.
+  const olusturulanEtiketSayisi = await prisma.$transaction(
+    async (tx) => {
+      // --- 2) Kart numaralarini TEK sayac artisiyla topluca ayir (bkz. dosya basi not).
+      const guncelProje = await tx.project.update({
+        where: { id: projectId },
+        data: { cardCounter: { increment: alinacakKartlar.length } },
+        select: { cardCounter: true },
       });
-      olusturulanEtiketSayisi = eksikAdlar.length;
-    }
-    const tumEtiketler = await prisma.label.findMany({
-      where: { projectId, name: { in: tumEtiketAdlari } },
-      select: { id: true, name: true },
-    });
-    const etiketIdByAd = new Map(tumEtiketler.map((e) => [e.name, e.id]));
+      const ilkNumara = guncelProje.cardCounter - alinacakKartlar.length + 1;
 
-    const cardLabelData = alinacakKartlar.flatMap((kart, i) => {
-      const cardId = idByNumara.get(ilkNumara + i);
-      if (!cardId) return [];
-      return kart.labels.map((ad) => ({ cardId, labelId: etiketIdByAd.get(ad)! })).filter((cl) => cl.labelId);
-    });
-    if (cardLabelData.length > 0) {
-      await prisma.cardLabel.createMany({ data: cardLabelData, skipDuplicates: true });
-    }
-  }
+      // --- 3) Hedef kolon basina baslangic pozisyonunu bir kez oku.
+      const hedefKolonIdleri = [...new Set([...kaynakKolonHedefi.values()].filter((v): v is string => !!v))];
+      const kolonSonPozisyonlari = await tx.column.findMany({
+        where: { id: { in: hedefKolonIdleri } },
+        select: { id: true, cards: { orderBy: { position: "desc" }, take: 1, select: { position: true } } },
+      });
+      const pozisyonSayaci = new Map<string, number>(
+        kolonSonPozisyonlari.map((k) => [k.id, k.cards[0]?.position ?? 0]),
+      );
 
-  // --- 6) Atamalar: kaynak kimlikten (isim/e-posta) kullaniciMapping ile
-  // gelen userId'yi kullan (client onizlemede eslestirmeyi kullanici onaylamis
-  // olur), TEK createMany.
-  const cardAssigneeData = alinacakKartlar.flatMap((kart, i) => {
-    const cardId = idByNumara.get(ilkNumara + i);
-    if (!cardId) return [];
-    const userIdler = [...new Set(kart.assigneeIdentifiers.map((kimlik) => userMapping[kimlik]).filter((v): v is string => !!v))];
-    return userIdler.map((uId) => ({ cardId, userId: uId }));
-  });
-  if (cardAssigneeData.length > 0) {
-    await prisma.cardAssignee.createMany({ data: cardAssigneeData, skipDuplicates: true });
-  }
+      const cardsData: Prisma.CardCreateManyInput[] = alinacakKartlar.map((kart, i) => {
+        const hedefKolon = kaynakKolonHedefi.get(kart.sourceColumnId)!;
+        const pozisyon = (pozisyonSayaci.get(hedefKolon) ?? 0) + 1;
+        pozisyonSayaci.set(hedefKolon, pozisyon);
+        return {
+          columnId: hedefKolon,
+          number: ilkNumara + i,
+          title: kart.title,
+          description: kart.description,
+          creatorId: userId,
+          priority: kart.priority ?? "MEDIUM",
+          position: pozisyon,
+        };
+      });
 
-  // --- 7) Checklist ogeleri: TEK createMany.
-  const checklistData = alinacakKartlar.flatMap((kart, i) => {
-    const cardId = idByNumara.get(ilkNumara + i);
-    if (!cardId) return [];
-    return kart.checklistItems.map((item, pos) => ({
-      cardId,
-      text: item.text.slice(0, 500),
-      done: item.done,
-      position: pos + 1,
-    }));
-  });
-  if (checklistData.length > 0) {
-    await prisma.checklistItem.createMany({ data: checklistData });
-  }
+      await tx.card.createMany({ data: cardsData });
+
+      // --- 4) Yeni kartlarin id'lerini numaradan TEK sorguda geri oku (numara
+      // proje icinde tekil - sayaçtan geliyor).
+      const olusanKartlar = await tx.card.findMany({
+        where: { column: { projectId }, number: { gte: ilkNumara, lte: ilkNumara + alinacakKartlar.length - 1 } },
+        select: { id: true, number: true },
+      });
+      // Geri okuma sonraki adimlarin on kosulu: eksik donerse etiket/atama/
+      // checklist baglantilari SESSIZCE atlanip islem yine "basarili"
+      // raporlaniyordu. Artik transaction'i geri sariyoruz.
+      if (olusanKartlar.length !== alinacakKartlar.length) {
+        throw new ValidationError("İçe aktarma doğrulanamadı, hiçbir değişiklik uygulanmadı");
+      }
+      const idByNumara = new Map(olusanKartlar.map((k) => [k.number, k.id]));
+
+      // --- 5) Etiketler: eksik olanlari topluca olustur, hepsini isimden id'ye
+      // TEK sorguda coz, sonra kart-etiket baglantilarini TEK createMany ile ekle.
+      const tumEtiketAdlari = [...new Set(alinacakKartlar.flatMap((k) => k.labels))];
+      let etiketSayisi = 0;
+      if (tumEtiketAdlari.length > 0) {
+        const mevcutEtiketler = await tx.label.findMany({
+          where: { projectId, name: { in: tumEtiketAdlari } },
+          select: { id: true, name: true },
+        });
+        const mevcutAdlar = new Set(mevcutEtiketler.map((e) => e.name));
+        const eksikAdlar = tumEtiketAdlari.filter((ad) => !mevcutAdlar.has(ad));
+        if (eksikAdlar.length > 0) {
+          const renkler = ["#EF4444", "#F97316", "#EAB308", "#22C55E", "#3B82F6", "#8B5CF6", "#EC4899"];
+          await tx.label.createMany({
+            data: eksikAdlar.map((ad, i) => ({ projectId, name: ad, color: renkler[i % renkler.length] })),
+          });
+          etiketSayisi = eksikAdlar.length;
+        }
+        const tumEtiketler = await tx.label.findMany({
+          where: { projectId, name: { in: tumEtiketAdlari } },
+          select: { id: true, name: true },
+        });
+        const etiketIdByAd = new Map(tumEtiketler.map((e) => [e.name, e.id]));
+
+        const cardLabelData = alinacakKartlar.flatMap((kart, i) => {
+          const cardId = idByNumara.get(ilkNumara + i);
+          if (!cardId) return [];
+          return kart.labels.map((ad) => ({ cardId, labelId: etiketIdByAd.get(ad)! })).filter((cl) => cl.labelId);
+        });
+        if (cardLabelData.length > 0) {
+          await tx.cardLabel.createMany({ data: cardLabelData, skipDuplicates: true });
+        }
+      }
+
+      // --- 6) Atamalar: kaynak kimlikten (isim/e-posta) kullaniciMapping ile
+      // gelen userId'yi kullan (0. adimda organizasyon uyeligine karsi
+      // dogrulandi), TEK createMany.
+      const cardAssigneeData = alinacakKartlar.flatMap((kart, i) => {
+        const cardId = idByNumara.get(ilkNumara + i);
+        if (!cardId) return [];
+        const userIdler = [...new Set(kart.assigneeIdentifiers.map((kimlik) => userMapping[kimlik]).filter((v): v is string => !!v))];
+        return userIdler.map((uId) => ({ cardId, userId: uId }));
+      });
+      if (cardAssigneeData.length > 0) {
+        await tx.cardAssignee.createMany({ data: cardAssigneeData, skipDuplicates: true });
+      }
+
+      // --- 7) Checklist ogeleri: TEK createMany.
+      const checklistData = alinacakKartlar.flatMap((kart, i) => {
+        const cardId = idByNumara.get(ilkNumara + i);
+        if (!cardId) return [];
+        return kart.checklistItems.map((item, pos) => ({
+          cardId,
+          text: item.text.slice(0, 500),
+          done: item.done,
+          position: pos + 1,
+        }));
+      });
+      if (checklistData.length > 0) {
+        await tx.checklistItem.createMany({ data: checklistData });
+      }
+
+      return etiketSayisi;
+    },
+    // Prisma'nin varsayilan 5 sn'lik transaction penceresi MAX_IMPORT_CARDS
+    // kadar kart + etiket + checklist yazimina yetmiyor; pencere tavana gore
+    // genisletiliyor.
+    { maxWait: 15_000, timeout: 120_000 },
+  );
 
   return {
     createdColumns: olusturulanKolonSayisi,
-    createdCards: cardsData.length,
+    createdCards: alinacakKartlar.length,
     createdLabels: olusturulanEtiketSayisi,
     skippedCards: atlananKartSayisi,
   };

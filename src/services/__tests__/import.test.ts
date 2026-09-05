@@ -168,6 +168,57 @@ describe("içe aktarma - uygula", () => {
     expect(sonuc.skippedCards).toBe(1);
   }, 60000);
 
+  // Çapraz proje sütun eşlemesi hiç test edilmiyordu: gövdeden gelen "existing"
+  // hedef sütun id'si başka bir organizasyonun projesine ait olabilir ve kartın
+  // projesi Column üzerinden bulunduğu için hiçbir şema kısıtı bunu yakalamaz.
+  // Bu test, applyImport'taki izin listesi kontrolünün (kendi projesinin sütun
+  // id'leri) kalkması durumunda CI'ın uyarmasını sağlar.
+  it("başka projenin sütununa eşleme ValidationError fırlatır ve hiçbir şey yazmaz", async () => {
+    const ws = await createWorkspace();
+    const yabanci = await createWorkspace();
+    orgIds.push(ws.org.id, yabanci.org.id);
+    userIds.push(
+      ws.admin.id,
+      ws.member.id,
+      ws.outsider.id,
+      yabanci.admin.id,
+      yabanci.member.id,
+      yabanci.outsider.id,
+    );
+
+    await expect(
+      importService.applyImport(
+        ws.project.id,
+        "TRELLO_JSON",
+        trelloOrnek,
+        {
+          list1: { mode: "existing", columnId: yabanci.todo.id },
+          list2: { mode: "new", name: "Doing" },
+        },
+        {},
+        ws.admin.id,
+      ),
+    ).rejects.toThrow(ValidationError);
+
+    // Doğrulama kolon oluşturma döngüsünden ÖNCE yapılıyor; "new" eşlemesinden
+    // geriye yarım kalmış bir kolon da kalmamalı.
+    const yeniKolonSayisi = await prisma.column.count({
+      where: { projectId: ws.project.id, name: "Doing" },
+    });
+    expect(yeniKolonSayisi).toBe(0);
+
+    // Asıl kusur: yabancı projeye tek bir kart bile yazılmamalı.
+    const yabanciKartSayisi = await prisma.card.count({
+      where: { column: { projectId: yabanci.project.id } },
+    });
+    expect(yabanciKartSayisi).toBe(0);
+
+    const kendiKartSayisi = await prisma.card.count({
+      where: { column: { projectId: ws.project.id } },
+    });
+    expect(kendiKartSayisi).toBe(0);
+  }, 60000);
+
   it("üye ama admin olmayan biri uygulayamaz", async () => {
     const ws = await createWorkspace();
     orgIds.push(ws.org.id);
