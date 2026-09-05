@@ -7,8 +7,11 @@ import {
   assertCanManageProjectAccess,
 } from "@/services/access-control.service";
 import * as projectService from "@/services/project.service";
+import * as changeRequestService from "@/services/change-request.service";
+import * as organizationService from "@/services/organization.service";
+import * as templateService from "@/services/template.service";
 import { ForbiddenError, NotFoundError } from "@/utils/errors";
-import { createWorkspace, createUser, cleanup, uniq } from "@/test/fixtures";
+import { createWorkspace, createUser, createCard, cleanup, uniq } from "@/test/fixtures";
 
 const orgIds: string[] = [];
 const userIds: string[] = [];
@@ -267,5 +270,163 @@ describe("assertCanManageProjectAccess", () => {
         isOwner: true,
       })
     ).not.toThrow();
+  });
+});
+
+// Yukaridaki testlerin hepsi checkProjectAccess'i ZATEN cagiran yollar
+// uzerinden kosuyordu; gorunurluk kuralini BAYPAS eden uclar (talep acma,
+// org detayindaki proje listesi, sablon listeleme, uye cikarma sonrasi kalan
+// ProjectMember artigi) hic test edilmiyordu. O yollar duzeltildi ama
+// regresyon testi olmadigi icin sessizce tekrar kirilabilirdi - asagidaki
+// testler tam olarak o dort yolu kilitliyor.
+describe("gorunurluk kuralini baypas eden uclar - regresyon", () => {
+  // (a) Talep akisi panoyu okumakla ayni gorunurluk kapisindan gecmeli:
+  // kart/sutun id'sini bilmek tek basina talep acmaya yetmemeli.
+  it("GUEST goremedigi projedeki karta CARD_DELETE talebi acamaz", async () => {
+    const ws = await createWorkspace();
+    orgIds.push(ws.org.id);
+    userIds.push(ws.admin.id, ws.member.id, ws.outsider.id);
+
+    const guest = await createUser("Guest Talep");
+    userIds.push(guest.id);
+    await prisma.organizationMember.create({
+      data: { organizationId: ws.org.id, userId: guest.id, role: "GUEST" },
+    });
+
+    const kart = await createCard(ws.todo.id, ws.admin.id, "Gizli kart");
+
+    // GUEST org uyesi ama ProjectMember degil -> projeyi hic goremez
+    await expect(
+      changeRequestService.createRequest(
+        { type: "CARD_DELETE", targetCardId: kart.id, payload: {} },
+        guest.id
+      )
+    ).rejects.toThrow(ForbiddenError);
+
+    // Ayni kart icin projeyi GOREBILEN uye talep acabiliyor olmali - aksi
+    // halde test yalnizca "her sey reddediliyor" diyerek bos gecerdi.
+    const talep = await changeRequestService.createRequest(
+      { type: "CARD_DELETE", targetCardId: kart.id, payload: {} },
+      ws.member.id
+    );
+    expect(talep.status).toBe("PENDING");
+  });
+
+  it("MEMBER eklenmedigi PRIVATE projedeki karta CARD_UPDATE talebi acamaz", async () => {
+    const ws = await createWorkspace();
+    orgIds.push(ws.org.id);
+    userIds.push(ws.admin.id, ws.member.id, ws.outsider.id);
+
+    const gizliProje = await prisma.project.create({
+      data: {
+        name: uniq("gizli-talep"),
+        key: "GTL",
+        organizationId: ws.org.id,
+        ownerId: ws.admin.id,
+        visibility: "PRIVATE",
+      },
+    });
+    const gizliSutun = await prisma.column.create({
+      data: { projectId: gizliProje.id, name: "To Do", position: 1 },
+    });
+    const gizliKart = await createCard(gizliSutun.id, ws.admin.id, "Gizli proje karti");
+
+    await expect(
+      changeRequestService.createRequest(
+        { type: "CARD_UPDATE", targetCardId: gizliKart.id, payload: { title: "Yeni" } },
+        ws.member.id
+      )
+    ).rejects.toThrow(ForbiddenError);
+  });
+
+  // (b) Org detay ucu once TUM projeleri filtresiz donduruyordu; GUEST'e
+  // erisemedigi projelerin adi/aciklamasi siziyordu.
+  it("getOrganizationById GUEST'e yalnizca acikca eklendigi projeyi doner", async () => {
+    const ws = await createWorkspace();
+    orgIds.push(ws.org.id);
+    userIds.push(ws.admin.id, ws.member.id, ws.outsider.id);
+
+    const guest = await createUser("Guest Org Detay");
+    userIds.push(guest.id);
+    await prisma.organizationMember.create({
+      data: { organizationId: ws.org.id, userId: guest.id, role: "GUEST" },
+    });
+    await prisma.projectMember.create({ data: { projectId: ws.project.id, userId: guest.id } });
+
+    const digerProje = await prisma.project.create({
+      data: { name: uniq("guest-disi"), key: "GDS", organizationId: ws.org.id, ownerId: ws.admin.id },
+    });
+
+    const org = await organizationService.getOrganizationById(ws.org.id, guest.id);
+    const projeIdleri = org.projects.map((p) => p.id);
+    expect(projeIdleri).toContain(ws.project.id);
+    expect(projeIdleri).not.toContain(digerProje.id);
+  });
+
+  // (c) Sablon uclari eskiden yalnizca "org uyesi mi" diye bakiyordu: PRIVATE
+  // bir projenin sablon adlari/basliklari/checklist maddeleri org'daki herkese
+  // aciliyordu.
+  it("listTemplates goremedigi PRIVATE projede ADMIN'i bile reddeder", async () => {
+    const ws = await createWorkspace();
+    orgIds.push(ws.org.id);
+    userIds.push(ws.admin.id, ws.member.id, ws.outsider.id);
+
+    const gizliProje = await prisma.project.create({
+      data: {
+        name: uniq("gizli-sablon"),
+        key: "GSB",
+        organizationId: ws.org.id,
+        ownerId: ws.member.id,
+        visibility: "PRIVATE",
+      },
+    });
+    await prisma.cardTemplate.create({
+      data: {
+        projectId: gizliProje.id,
+        name: uniq("sablon"),
+        title: "Gizli sablon basligi",
+        checklistItems: ["gizli madde"],
+        createdById: ws.member.id,
+      },
+    });
+
+    // ADMIN, PRIVATE projeye ProjectMember olarak eklenmedigi icin goremez
+    await expect(templateService.listTemplates(gizliProje.id, ws.admin.id)).rejects.toThrow(
+      ForbiddenError
+    );
+
+    // Sahibi icin uc calisiyor olmali - yoksa test "sablon yok" diye bos gecerdi
+    const sahipListesi = await templateService.listTemplates(gizliProje.id, ws.member.id);
+    expect(sahipListesi).toHaveLength(1);
+  });
+
+  // (d) OrganizationMember silinirken ProjectMember satirlari kaliyordu; kisi
+  // ileride tekrar davet edilince checkProjectAccess o eski satiri bulup
+  // PRIVATE projeye erisimi sessizce geri veriyordu.
+  it("removeMember ProjectMember artigi birakmaz, tekrar uye olmak erisimi geri getirmez", async () => {
+    const ws = await createWorkspace();
+    orgIds.push(ws.org.id);
+    userIds.push(ws.admin.id, ws.member.id, ws.outsider.id);
+
+    await projectService.addProjectMember(ws.project.id, ws.member.id, ws.admin.id);
+    await setVisibility(ws.project.id, "PRIVATE");
+
+    // Once erisimi var oldugunu dogrula (aksi halde asagisi anlamsiz olurdu)
+    const oncekiErisim = await checkProjectAccess(ws.project.id, ws.member.id);
+    expect(oncekiErisim.role).toBe("MEMBER");
+
+    await organizationService.removeMember(ws.org.id, ws.member.id, ws.admin.id);
+
+    const kalanProjectMember = await prisma.projectMember.count({
+      where: { userId: ws.member.id, project: { organizationId: ws.org.id } },
+    });
+    expect(kalanProjectMember).toBe(0);
+
+    // Tekrar davet edilip kabul etmis gibi org uyeligini geri veriyoruz:
+    // PRIVATE projeye erisim GERI GELMEMELI.
+    await prisma.organizationMember.create({
+      data: { organizationId: ws.org.id, userId: ws.member.id, role: "MEMBER" },
+    });
+    await expect(checkProjectAccess(ws.project.id, ws.member.id)).rejects.toThrow(ForbiddenError);
   });
 });

@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { NotFoundError, ForbiddenError, ValidationError } from "@/utils/errors";
 import { checkMembership } from "@/services/project.service";
+import { checkProjectAccess } from "@/services/access-control.service";
 
 export interface TemplateColumn {
   name: string;
@@ -77,6 +78,18 @@ export async function listProjectTemplates(organizationId: string, userId: strin
 // Mevcut bir projenin kolon+etiket yapisini sablon olarak kaydeder.
 // Kartlar BILEREK haric - sablon "yapi" demek, "veri" degil.
 export async function createProjectTemplateFromProject(projectId: string, name: string, userId: string) {
+  // Gorunurluk kurali bu yolda da gecerli olmali. Onceden proje dogrudan
+  // ID ile okunup yalnizca org ADMIN'ligi dogrulaniyordu; oysa access-control
+  // kuralina gore ADMIN, ProjectMember olmadigi PRIVATE bir projeyi goremez.
+  // Bu yuzden goremedigi projenin kolon/WIP/etiket yapisi org geneline acik
+  // bir ProjectTemplate olarak disari cikarilabiliyordu. Once erisim, sonra
+  // okuma: checkProjectAccess proje yoksa NotFoundError, erisim yoksa
+  // ForbiddenError firlatir.
+  const access = await checkProjectAccess(projectId, userId);
+  if (access.role !== "ADMIN") {
+    throw new ForbiddenError("Sadece adminler şablon oluşturabilir");
+  }
+
   const project = await prisma.project.findUnique({
     where: { id: projectId },
     select: {
@@ -86,11 +99,6 @@ export async function createProjectTemplateFromProject(projectId: string, name: 
     },
   });
   if (!project) throw new NotFoundError("Proje");
-
-  const member = await checkMembership(project.organizationId, userId);
-  if (!member || member.role !== "ADMIN") {
-    throw new ForbiddenError("Sadece adminler şablon oluşturabilir");
-  }
 
   return prisma.projectTemplate.create({
     data: {

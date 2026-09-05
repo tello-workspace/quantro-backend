@@ -4,7 +4,10 @@ import * as cardService from "@/services/card.service";
 import * as columnService from "@/services/column.service";
 import * as projectService from "@/services/project.service";
 import * as notificationService from "@/services/notification.service";
-import { broadcastToOrganization, SocketEvents } from "@/server/socket";
+import * as labelService from "@/services/label.service";
+import * as dependencyService from "@/services/dependency.service";
+import { checkProjectAccess, getVisibleProjectIds } from "@/services/access-control.service";
+import { broadcastToUser, SocketEvents } from "@/server/socket";
 import { dispatchEvent } from "@/services/webhook.service";
 import type {
   CreateChangeRequestInput,
@@ -27,6 +30,27 @@ async function getMembership(organizationId: string, userId: string) {
   return member;
 }
 
+async function adminUserIdleri(organizationId: string): Promise<string[]> {
+  const adminler = await prisma.organizationMember.findMany({
+    where: { organizationId, role: "ADMIN" },
+    select: { userId: true },
+  });
+  return adminler.map((a) => a.userId);
+}
+
+// Talep olaylarini org odasina degil, yalnizca talebi degerlendirecek
+// adminlerin ve talep sahibinin kisisel odalarina gonderir.
+function yayinlaTalep(
+  adminUserIds: string[],
+  requestedById: string,
+  event: Parameters<typeof broadcastToUser>[1],
+  veri: unknown,
+) {
+  for (const uid of new Set([...adminUserIds, requestedById])) {
+    broadcastToUser(uid, event, veri);
+  }
+}
+
 // Talebin hangi organizasyona ait oldugunu istegin turune gore cozer ve
 // ayni anda kullanicinin oraya erisimini dogrular.
 async function resolveScope(input: CreateChangeRequestInput, userId: string) {
@@ -41,6 +65,13 @@ async function resolveScope(input: CreateChangeRequestInput, userId: string) {
       select: { projectId: true, project: { select: { organizationId: true } } },
     });
     if (!column) throw new NotFoundError("Sütun");
+    // Burada onceden SADECE org uyeligi araniyordu (createRequest'teki
+    // getMembership). Yani PRIVATE/TEAM bir projeye eklenmemis bir uye ya da
+    // GUEST, elindeki sutun/kart id'siyle o projeye talep acabiliyor ve donen
+    // kayittaki proje adi + kart basligini okuyabiliyordu; admin onaylayinca
+    // degisiklik de gercekten uygulaniyordu. Talep acmayi panoyu okumakla ayni
+    // gorunurluk kuralina bagliyoruz.
+    await checkProjectAccess(column.projectId, userId);
     return {
       organizationId: column.project.organizationId,
       projectId: column.projectId,
@@ -57,6 +88,8 @@ async function resolveScope(input: CreateChangeRequestInput, userId: string) {
       },
     });
     if (!card) throw new NotFoundError("Kart");
+    // Ayni gorunurluk kapisi: kart id'sini bilmek talep acmaya yetmemeli
+    await checkProjectAccess(card.column.projectId, userId);
     return {
       organizationId: card.column.project.organizationId,
       projectId: card.column.projectId,
@@ -71,6 +104,8 @@ async function resolveScope(input: CreateChangeRequestInput, userId: string) {
     select: { organizationId: true },
   });
   if (!project) throw new NotFoundError("Proje");
+  // Ayni gorunurluk kapisi: goremedigi projeye sutun talebi acilamamali
+  await checkProjectAccess(input.projectId, userId);
   return {
     organizationId: project.organizationId,
     projectId: input.projectId,
@@ -140,7 +175,12 @@ export async function createRequest(
     });
   }
 
-  broadcastToOrganization(scope.organizationId, SocketEvents.REQUEST_CREATED, request);
+  // Yayin da bildirimle ayni kitleye gitmeli: org odasinda GUEST'ler ve
+  // projeye erisimi olmayan uyeler de oturuyor, oysa yayinlanan kayit
+  // REQUEST_INCLUDE sayesinde proje adini, kart basligini ve talep edenin
+  // e-postasini tasiyor. Org odasina yayin, listRequests'in "uye yalnizca
+  // kendi talebini gorur" kuralini socket uzerinden deliyordu.
+  yayinlaTalep(adminler.map((a) => a.userId), userId, SocketEvents.REQUEST_CREATED, request);
 
   return request;
 }
@@ -152,12 +192,19 @@ export async function listRequests(
 ) {
   const member = await getMembership(organizationId, userId);
 
+  // Org uyeligi tek basina yetmiyor: kayitlar proje adini ve kart basligini
+  // tasidigi icin, kullanicinin goremedigi (GUEST/TEAM/PRIVATE) projelerin
+  // talepleri listede sizinti olur - admin de PRIVATE bir projeye eklenmemis
+  // olabilir. Projesiz talepler (PROJECT_CREATE) kapsam disinda kalmamali.
+  const gorunurProjeIdleri = await getVisibleProjectIds(organizationId, userId);
+
   const requests = await prisma.changeRequest.findMany({
     where: {
       organizationId,
       ...(input.status ? { status: input.status } : {}),
       // Uye yalnizca kendi taleplerini gorur, admin hepsini
       ...(member.role === "ADMIN" ? {} : { requestedById: userId }),
+      OR: [{ projectId: null }, { projectId: { in: [...gorunurProjeIdleri] } }],
     },
     orderBy: [{ status: "asc" }, { createdAt: "desc" }],
     take: input.limit,
@@ -209,21 +256,29 @@ async function applyRequest(
         adminId,
       );
 
-      // Attach labels if provided
+      // Etiket/bagimlilik id'leri talebi acan UYEDEN geliyor ve sema onlari
+      // serbest string olarak aliyor. Ham prisma.create ile yazmak servis
+      // katmanindaki kontrolleri atliyordu: baska projenin etiketi karta
+      // ilistirilebiliyor, baska projedeki (hatta erisilemeyen) bir kart
+      // blocker yapilabiliyor ve dongu kontrolu hic calismiyordu. Normal
+      // yolla, onaylayan adminin kimligiyle ekliyoruz.
       if (payload.labelIds && Array.isArray(payload.labelIds)) {
         for (const labelId of payload.labelIds) {
-          await prisma.cardLabel.create({
-            data: { cardId: card.id, labelId },
-          }).catch(err => console.warn("Error attaching label to requested card:", err));
+          await labelService
+            .attachLabelToCard(card.id, labelId as string, adminId)
+            .catch((err) =>
+              console.warn("[ChangeRequest] Etiket eklenemedi:", labelId, err?.message ?? err),
+            );
         }
       }
 
-      // Attach dependencies if provided
       if (payload.blockerIds && Array.isArray(payload.blockerIds)) {
         for (const blockerId of payload.blockerIds) {
-          await prisma.cardDependency.create({
-            data: { blockerId, blockedId: card.id },
-          }).catch(err => console.warn("Error attaching dependency to requested card:", err));
+          await dependencyService
+            .addDependency(card.id, blockerId as string, adminId)
+            .catch((err) =>
+              console.warn("[ChangeRequest] Bagimlilik eklenemedi:", blockerId, err?.message ?? err),
+            );
         }
       }
 
@@ -283,30 +338,46 @@ export async function approveRequest(requestId: string, userId: string, note?: s
 
   // If the admin modified the payload, update/merge it first
   if (modifiedPayload) {
-    const newPayload = {
+    request.payload = {
       ...((request.payload as any) || {}),
       ...modifiedPayload,
     };
-    await prisma.changeRequest.update({
-      where: { id: requestId },
-      data: {
-        payload: newPayload,
-      },
-    });
-    request.payload = newPayload;
   }
 
-  // Once uygula: uygulama patlarsa talep PENDING kalir, admin tekrar dener
-  const sonuc = await applyRequest(request, userId);
-
-  const updated = await prisma.changeRequest.update({
-    where: { id: requestId },
+  // Once uygulayip sonra status yazmak atomik degildi: iki admin ayni talebi
+  // neredeyse ayni anda onaylayinca ikisi de PENDING okuyup ikisi de
+  // applyRequest calistiriyordu (ayni sutunda cift kart, cift bildirim).
+  // Talebi once KOSULLU olarak sahipleniyoruz; PENDING'den APPROVED'a gecisi
+  // yalnizca tek bir istek kazanabilir, kaybeden ConflictError alir.
+  const sahiplenme = await prisma.changeRequest.updateMany({
+    where: { id: requestId, status: "PENDING" },
     data: {
       status: "APPROVED",
       reviewedById: userId,
       reviewedAt: new Date(),
       reviewNote: note,
+      ...(modifiedPayload ? { payload: request.payload as object } : {}),
     },
+  });
+  if (sahiplenme.count === 0) {
+    throw new ConflictError("Bu talep zaten sonuçlandırılmış");
+  }
+
+  // Uygulama patlarsa talebi PENDING'e geri aliyoruz; onceki davranis gibi
+  // admin tekrar deneyebilsin ama bu arada talep "sonuclanmis" gorunmesin.
+  let sonuc: Awaited<ReturnType<typeof applyRequest>>;
+  try {
+    sonuc = await applyRequest(request, userId);
+  } catch (err) {
+    await prisma.changeRequest.updateMany({
+      where: { id: requestId, status: "APPROVED" },
+      data: { status: "PENDING", reviewedById: null, reviewedAt: null, reviewNote: null },
+    });
+    throw err;
+  }
+
+  const updated = await prisma.changeRequest.findUniqueOrThrow({
+    where: { id: requestId },
     include: REQUEST_INCLUDE,
   });
 
@@ -317,7 +388,14 @@ export async function approveRequest(requestId: string, userId: string, note?: s
     cardId: sonuc.kind === "card" ? sonuc.id : undefined,
   });
 
-  broadcastToOrganization(request.organizationId, SocketEvents.REQUEST_REVIEWED, updated);
+  // Sonuc yayini da org odasina degil ilgili taraflara: kayit proje adi ve
+  // kart basligini tasidigi icin projeye erisimi olmayanlara gitmemeli
+  yayinlaTalep(
+    await adminUserIdleri(request.organizationId),
+    request.requestedById,
+    SocketEvents.REQUEST_REVIEWED,
+    updated,
+  );
 
   if (request.projectId) {
     void dispatchEvent(request.projectId, "CHANGE_REQUEST_APPROVED", {
@@ -333,15 +411,25 @@ export async function approveRequest(requestId: string, userId: string, note?: s
 export async function rejectRequest(requestId: string, userId: string, note?: string) {
   const request = await getPendingOrThrow(requestId, userId);
 
-  // Reddedilen talebin payload'i uygulanmaz; kayit gecmis icin durur
-  const updated = await prisma.changeRequest.update({
-    where: { id: requestId },
+  // Reddedilen talebin payload'i uygulanmaz; kayit gecmis icin durur.
+  // Durum gecisi burada da kosullu: aksi halde onayla-reddet yarisinda
+  // uygulanmis bir talep REJECTED'a cevrilip ikinci bir bildirim ureterek
+  // kaydi gercekte olan bitenle celisir hale getiriyordu.
+  const sonuclandirma = await prisma.changeRequest.updateMany({
+    where: { id: requestId, status: "PENDING" },
     data: {
       status: "REJECTED",
       reviewedById: userId,
       reviewedAt: new Date(),
       reviewNote: note,
     },
+  });
+  if (sonuclandirma.count === 0) {
+    throw new ConflictError("Bu talep zaten sonuçlandırılmış");
+  }
+
+  const updated = await prisma.changeRequest.findUniqueOrThrow({
+    where: { id: requestId },
     include: REQUEST_INCLUDE,
   });
 
@@ -353,7 +441,13 @@ export async function rejectRequest(requestId: string, userId: string, note?: st
       : `Talebin reddedildi: ${aciklama(request.type, request.payload)}`,
   });
 
-  broadcastToOrganization(request.organizationId, SocketEvents.REQUEST_REVIEWED, updated);
+  // Ret yayini da ayni sekilde adminler + talep sahibiyle sinirli
+  yayinlaTalep(
+    await adminUserIdleri(request.organizationId),
+    request.requestedById,
+    SocketEvents.REQUEST_REVIEWED,
+    updated,
+  );
 
   return updated;
 }

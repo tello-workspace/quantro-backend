@@ -1,7 +1,8 @@
 import { prisma } from "@/lib/prisma";
 import { NotFoundError, ConflictError, ForbiddenError } from "@/utils/errors";
 import * as notificationService from "@/services/notification.service";
-import { broadcastToOrganization, SocketEvents } from "@/server/socket";
+import { filterVisibleProjects } from "@/services/access-control.service";
+import { broadcastToOrganization, SocketEvents, evictFromOrganization } from "@/server/socket";
 import type { CreateOrganizationInput, UpdateOrganizationInput, AddMemberInput, UpdateMemberRoleInput } from "@/schemas/organization.schema";
 import type { Role } from "@prisma/client";
 
@@ -90,7 +91,9 @@ export async function getOrganizationById(organizationId: string, userId: string
           },
         },
         projects: {
-          select: { id: true, name: true, description: true, createdAt: true },
+          // ownerId/visibility yalnizca gorunurluk filtresi icin cekiliyor,
+          // cevaba konulmuyor (asagida ayikaniyor).
+          select: { id: true, name: true, description: true, createdAt: true, ownerId: true, visibility: true },
           orderBy: { createdAt: "desc" },
         },
       },
@@ -101,7 +104,18 @@ export async function getOrganizationById(organizationId: string, userId: string
 
   if (!org) throw new NotFoundError("Organizasyon");
 
-  return { ...org, myRole: member.role };
+  // Bu uc org'un TUM projelerini filtresiz donduruyordu: GUEST'e ve PRIVATE/TEAM
+  // projeye eklenmemis MEMBER'a proje adi + aciklamasi siziyordu. GET /projects
+  // ile ayni kurali uygulamak icin access-control'un tek gercek kaynagindan
+  // geciriyoruz; disari donen sekil eskisiyle ayni kalsin diye filtre icin
+  // secilen ownerId/visibility alanlari ayikaniyor.
+  const gorunurProjeler = await filterVisibleProjects(org.projects, userId, member.role);
+
+  return {
+    ...org,
+    projects: gorunurProjeler.map(({ id, name, description, createdAt }) => ({ id, name, description, createdAt })),
+    myRole: member.role,
+  };
 }
 
 export async function updateOrganization(organizationId: string, input: UpdateOrganizationInput, userId: string) {
@@ -189,22 +203,32 @@ export async function acceptInvitation(invitationId: string, userId: string) {
   if (invitation.invitedUserId !== userId) throw new ForbiddenError("Bu davet size ait değil");
   if (invitation.status !== "PENDING") throw new ConflictError("Bu davet zaten yanıtlanmış");
 
+  // Yukaridaki status okumasi ile yazma arasinda hicbir kilit yoktu; iki kusuru
+  // birden kapatiyoruz. (1) Davet durumu artik KOSULLU guncelleniyor: ayni davete
+  // es zamanli iki kez tiklanirsa ikinci istek count===0 alip ConflictError'a
+  // dusuyor, uyelik iki kez islenmiyor. (2) Uyelik create yerine upsert ile
+  // yaziliyor: ayni kullaniciya iki ayri PENDING davet acilmissa (inviteMember'daki
+  // findFirst kontrolu de kontrol-sonra-yaz oldugu icin mumkun) ikinci kabul
+  // OrganizationMember'in bilesik anahtarina takilip P2002 -> 500 dondurmuyor ve
+  // o davet sonsuza kadar PENDING kalmiyor. Zaten uye olan kisinin rolune
+  // dokunulmuyor; rol degistirmek updateMemberRole'un isi.
   const member = await prisma.$transaction(async (tx) => {
-    const created = await tx.organizationMember.create({
-      data: {
+    const { count } = await tx.organizationInvitation.updateMany({
+      where: { id: invitationId, status: "PENDING" },
+      data: { status: "ACCEPTED", respondedAt: new Date() },
+    });
+    if (count === 0) throw new ConflictError("Bu davet zaten yanıtlanmış");
+
+    return tx.organizationMember.upsert({
+      where: { organizationId_userId: { organizationId: invitation.organizationId, userId } },
+      create: {
         organizationId: invitation.organizationId,
         userId,
         role: invitation.role,
       },
+      update: {},
       include: { user: { select: { id: true, name: true, email: true } } },
     });
-
-    await tx.organizationInvitation.update({
-      where: { id: invitationId },
-      data: { status: "ACCEPTED", respondedAt: new Date() },
-    });
-
-    return created;
   });
 
   await notificationService.createNotification({
@@ -298,10 +322,33 @@ export async function removeMember(organizationId: string, memberUserId: string,
     message: `"${org?.name ?? "Organizasyon"}" organizasyonundan çıkarıldı`,
   });
 
-  await prisma.organizationMember.delete({
-    where: { organizationId_userId: { organizationId, userId: memberUserId } },
+  // Sadece OrganizationMember silmek yetmiyordu: ProjectMember satirlari org
+  // uyeligine bagli cascade edilmedigi icin DB'de kaliyor ve kisi ileride
+  // (orn. GUEST olarak) tekrar davet edildiginde checkProjectAccess bu eski
+  // satirlari bulup PRIVATE projelere erisimi sessizce geri veriyordu. Ayni
+  // sekilde bekleyen davetler de artik anlamsiz, temizleniyor. Hepsi tek
+  // transaction'da: yarim kalan temizlik ayni acigi birakir.
+  await prisma.$transaction(async (tx) => {
+    await tx.projectMember.deleteMany({
+      where: { userId: memberUserId, project: { organizationId } },
+    });
+
+    await tx.organizationInvitation.deleteMany({
+      where: { organizationId, invitedUserId: memberUserId, status: "PENDING" },
+    });
+
+    await tx.organizationMember.delete({
+      where: { organizationId_userId: { organizationId, userId: memberUserId } },
+    });
   });
 
+  // Uyelik silinse de kullanicinin ACIK socket'i org/proje odalarinda kaliyordu:
+  // odalar yalnizca handshake aninda hesaplandigi icin REST 403 donerken canli
+  // kart/yorum/sohbet yayinlari sekme kapanana kadar akmaya devam ediyordu.
+  // Tahliye socket.ts'teki ortak yardimciya birakiliyor: org + proje odalarinin
+  // yaninda KART odalarini da temizliyor ve socket.organizations/projects
+  // dizilerini de guncelliyor (burada elle yazilan surum bunlari atliyordu).
+  await evictFromOrganization(organizationId, memberUserId);
 }
 
 export async function updateMemberRole(organizationId: string, input: UpdateMemberRoleInput, userId: string) {
@@ -325,6 +372,17 @@ export async function updateMemberRole(organizationId: string, input: UpdateMemb
       user: { select: { id: true, name: true, email: true } },
     },
   });
+
+  // Rol DUSURULDUGUNDE de socket odalari bayat kaliyor - uye cikarmadaki
+  // ayni kusur. GUEST, gorunurlukten bagimsiz olarak yalnizca ACIKCA
+  // eklendigi projeleri gorebilir (bkz. access-control.service); dolayisiyla
+  // ADMIN/MEMBER iken otomatik katildigi org ve proje odalarinin cogunda
+  // artik bulunmamasi gerekiyor. Tahliye sonrasi istemci hala erisebildigi
+  // projelere join:project ile geri girer - o yol her seferinde DB'den
+  // dogrulaniyor, yani yalnizca hakki olan odalara donebilir.
+  if (member.role !== "GUEST" && input.role === "GUEST") {
+    await evictFromOrganization(organizationId, input.userId);
+  }
 
   // Sadece admin yapılınca bildirim git
   if (input.role === "ADMIN") {
