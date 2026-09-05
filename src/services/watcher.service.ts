@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { checkCardAccess } from "@/services/access-control.service";
-import * as notificationService from "@/services/notification.service";
+import { broadcastToUser, SocketEvents } from "@/server/socket";
 
 export async function getWatchStatus(cardId: string, userId: string) {
   await checkCardAccess(cardId, userId);
@@ -175,11 +175,25 @@ export async function getWatchedCards(userId: string) {
  * Atama bildirimlerinden AYRI çalışır - birisi hem atanmış hem izliyor
  * olabilir ve iki bildirimi de alır, çünkü farklı şeyler söylerler:
  * biri "sana atandı", diğeri "izlediğin kartta hareket var".
+ *
+ * TOPLU YAZIM: eskiden izleyici başına notificationService.createNotification
+ * çağrılıyordu; bu, izleyici başına 2 seri sorgu (sessize alma kontrolü +
+ * insert) demekti. 40 izleyicili bir kartta tek yorum 80 ardışık sorgu açıp
+ * Supabase oturum havuzunu (pool_size 15) tıkıyordu - toggleWatchMany'de
+ * kaçınılan hatanın aynısı. Artık sessize alma TEK sorguda süzülüyor ve
+ * bildirimler TEK insert ile yazılıyor; döngüde yalnızca socket yayını kalıyor
+ * (notification.service.broadcastToOrganization ile aynı desen).
  */
 export async function notifyWatchers(cardId: string, excludeUserId: string, message: string) {
   const kart = await prisma.card.findUnique({
     where: { id: cardId },
-    select: { column: { select: { project: { select: { organizationId: true } } } } },
+    // id/title/projectId, createNotification'ın socket payload'ındaki `card`
+    // alanıyla birebir aynı şekli kurabilmek için çekiliyor.
+    select: {
+      id: true,
+      title: true,
+      column: { select: { projectId: true, project: { select: { organizationId: true } } } },
+    },
   });
   if (!kart) return;
 
@@ -199,12 +213,61 @@ export async function notifyWatchers(cardId: string, excludeUserId: string, mess
     select: { userId: true },
   });
 
-  for (const watcher of watchers) {
-    await notificationService.createNotification({
-      userId: watcher.userId,
+  if (watchers.length === 0) return;
+
+  // Sessize alma: eskiden her izleyici için ayrı findUnique yapılıyordu, artık
+  // kapalı tercihler tek sorguda çekilip küme olarak süzülüyor.
+  const susturulmus = await prisma.userNotificationPref.findMany({
+    where: {
+      enabled: false,
       type: "WATCHED_CARD_ACTIVITY",
+      userId: { in: watchers.map((w) => w.userId) },
+    },
+    select: { userId: true },
+  });
+  const susturulmusKume = new Set(susturulmus.map((s) => s.userId));
+  const aliciIdleri = watchers
+    .map((w) => w.userId)
+    .filter((userId) => !susturulmusKume.has(userId));
+
+  if (aliciIdleri.length === 0) return;
+
+  // Tek insert. createManyAndReturn kullanılıyor çünkü socket payload'ında
+  // gerçek bildirim id'si şart: istemci NOTIFICATION_READ'i id olmadan
+  // gönderemiyor.
+  const olusanlar = await prisma.notification.createManyAndReturn({
+    data: aliciIdleri.map((userId) => ({
+      userId,
+      type: "WATCHED_CARD_ACTIVITY" as const,
       message,
       cardId,
+    })),
+    select: { id: true, userId: true, read: true, createdAt: true },
+  });
+
+  // Payload şekli createNotification'ınkiyle aynı tutuluyor - istemci tarafı
+  // aynı bildirim bileşenini kullanıyor.
+  const kartOzeti = {
+    id: kart.id,
+    title: kart.title,
+    column: {
+      projectId: kart.column.projectId,
+      project: { organizationId: kart.column.project.organizationId },
+    },
+  };
+
+  for (const bildirim of olusanlar) {
+    broadcastToUser(bildirim.userId, SocketEvents.NOTIFICATION_NEW, {
+      id: bildirim.id,
+      userId: bildirim.userId,
+      cardId,
+      invitationId: null,
+      type: "WATCHED_CARD_ACTIVITY",
+      message,
+      read: bildirim.read,
+      createdAt: bildirim.createdAt.toISOString(),
+      card: kartOzeti,
+      invitation: null,
     });
   }
 }

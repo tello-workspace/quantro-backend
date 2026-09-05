@@ -61,14 +61,28 @@ export async function createNotification(input: CreateNotificationInput) {
   return notification;
 }
 
-export async function getNotifications(userId: string, unreadOnly?: boolean) {
+// Sabit take:50 sayfalama olmadan kullanildigi icin 50'den eski bildirimlere
+// hicbir sekilde ulasilamiyordu; getUnreadCount ise sinirsiz saydigi icin zil
+// rozeti ile liste kalici olarak tutarsiz kaliyordu. Cursor (son goruntulenen
+// bildirim id'si) ve limit parametreleri bu boslugu kapatir. Donen deger yine
+// duz bir dizi; istemci bir sonraki sayfa icin son ogenin id'sini cursor olarak
+// yollar. Ikincil id siralamasi ayni milisaniyeli kayitlarda sayfa kaymasini onler.
+export async function getNotifications(
+  userId: string,
+  unreadOnly?: boolean,
+  options?: { limit?: number; cursor?: string },
+) {
   const where: Record<string, unknown> = { userId };
   if (unreadOnly) where.read = false;
 
+  const take = options?.limit ?? 50;
+
   const notifications = await prisma.notification.findMany({
     where,
-    orderBy: { createdAt: "desc" },
-    take: 50,
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    take,
+    // cursor verilen kayit onceki sayfanin son ogesi oldugu icin skip:1 ile atlanir
+    ...(options?.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),
     include: {
       card: {
         select: {
@@ -131,15 +145,20 @@ export async function broadcastToOrganization(
   type: NotificationType,
   message: string,
   excludeUserId?: string,
+  // Mesaj org GENELINE degil belirli bir alici kumesine gitmeliyse (orn.
+  // gorunurlugu kisitli bir projenin ADINI iceren bildirimler) cagiran
+  // taraf alici listesini verir; verilmezse eski davranis (tum uyeler).
+  onlyUserIds?: string[],
 ) {
   const members = await prisma.organizationMember.findMany({
     where: { organizationId },
     select: { userId: true },
   });
 
-  const filtered = excludeUserId
-    ? members.filter((m) => m.userId !== excludeUserId)
-    : members;
+  const izinliSet = onlyUserIds ? new Set(onlyUserIds) : null;
+  const filtered = members.filter(
+    (m) => m.userId !== excludeUserId && (izinliSet === null || izinliSet.has(m.userId)),
+  );
 
   if (filtered.length === 0) return;
 
@@ -153,22 +172,27 @@ export async function broadcastToOrganization(
 
   if (recipients.length === 0) return;
 
-  await prisma.notification.createMany({
+  // createMany olusturulan id'leri dondurmedigi icin socket payload'i id'siz
+  // kaliyordu; istemci NOTIFICATION_READ'i notificationId olmadan gonderemedigi
+  // (ve React listesinde ayni undefined anahtari kullandigi) icin gercek
+  // satirlari donduren createManyAndReturn kullaniliyor.
+  const created = await prisma.notification.createManyAndReturn({
     data: recipients.map((m) => ({
       userId: m.userId,
       type,
       message,
     })),
+    select: { id: true, userId: true, read: true, createdAt: true },
   });
 
-  const createdAt = new Date().toISOString();
-  for (const member of recipients) {
-    broadcastToUser(member.userId, SocketEvents.NOTIFICATION_NEW, {
-      userId: member.userId,
+  for (const notification of created) {
+    broadcastToUser(notification.userId, SocketEvents.NOTIFICATION_NEW, {
+      id: notification.id,
+      userId: notification.userId,
       type,
       message,
-      read: false,
-      createdAt,
+      read: notification.read,
+      createdAt: notification.createdAt.toISOString(),
     });
   }
 }

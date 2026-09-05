@@ -15,11 +15,16 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const query = getNotificationsQuerySchema.parse({
       unreadOnly: searchParams.get("unreadOnly") ?? undefined,
+      limit: searchParams.get("limit") ?? undefined,
+      cursor: searchParams.get("cursor") ?? undefined,
     });
 
+    // Sayfalama parametreleri gecirilmezse servis eski davranisa (son 50) doner;
+    // cursor ile istemci 50'den eski bildirimlere de ulasabilir.
     const notifications = await notificationService.getNotifications(
       user.id,
       query.unreadOnly,
+      { limit: query.limit, cursor: query.cursor },
     );
 
     return successResponse(notifications);
