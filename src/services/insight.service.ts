@@ -95,10 +95,19 @@ export async function getProjectInsights(projectId: string, userId: string) {
     }))
     .sort((a, b) => b.weightedLoad - a.weightedLoad);
 
-  // Darbogaz: aktif kart sayisi wipLimit'i asan sutunlar
+  // Darbogaz: aktif kart sayisi wipLimit'i asan sutunlar.
+  // Sayim filtresizken sutundaki ARSIVLENMIS kartlar da sayiliyordu; panoda
+  // gorunmeyen kartlar yuzunden limit kalici olarak "asilmis" raporlaniyor,
+  // uyari hicbir zaman temizlenmiyordu. Aktif kart tanimi yukaridaki
+  // activeCards sorgusuyla ayni olsun diye sayim isArchived: false ile kapsanir.
   const columnsWithLimit = await prisma.column.findMany({
     where: { projectId, wipLimit: { not: null } },
-    select: { id: true, name: true, wipLimit: true, _count: { select: { cards: true } } },
+    select: {
+      id: true,
+      name: true,
+      wipLimit: true,
+      _count: { select: { cards: { where: { isArchived: false } } } },
+    },
   });
 
   const wipViolations = columnsWithLimit
@@ -147,9 +156,10 @@ export async function getProjectInsights(projectId: string, userId: string) {
   };
 }
 
-// Not: Activity artik doluyor (card/comment servisleri logActivity cagiriyor),
-// ama bu fonksiyon yine de Card tablosunun kendi zaman damgalarindan
-// hesapliyor - basit ve yeterli, degistirmeye gerek yok.
+// Not: Activity artik doluyor (card/comment servisleri logActivity cagiriyor).
+// Olusturma/yorum sayilari Card ve Comment tablolarinin kendi zaman
+// damgalarindan hesaplanmaya devam ediyor - basit ve yeterli; "tamamlanan"
+// olcutu ise asagida aciklandigi gibi Activity'ye tasindi.
 export async function getWeeklySummary(projectId: string, userId: string) {
   await checkProjectAccess(projectId, userId);
 
@@ -160,17 +170,29 @@ export async function getWeeklySummary(projectId: string, userId: string) {
       where: { column: { projectId }, createdAt: { gte: since }, isArchived: false },
       select: { creatorId: true, creator: { select: { id: true, name: true } } },
     }),
-    prisma.card.findMany({
-      where: { column: { projectId, isDone: true }, updatedAt: { gte: since }, isArchived: false },
-      select: { id: true },
+    // "Bu hafta tamamlanan" eskiden Done sutunundaki kartlarin updatedAt'ine
+    // bakiyordu; etiket eklemek/aciklama duzeltmek gibi HERHANGI bir degisiklik
+    // kartin updatedAt'ini tazeledigi icin bu olcut "bu hafta bitti" degil
+    // "Done'da olup bu hafta dokunuldu" anlamina geliyordu. Artik getCycleTime
+    // ile ayni ve dogru sinyal olan CARD_COMPLETED aktivitesi kullaniliyor;
+    // kart Done'a birden fazla kez girmisse distinct ile tek kez sayilir,
+    // arsivlenmis kartlar onceki davranistaki gibi disarida birakilir.
+    prisma.activity.findMany({
+      where: { projectId, type: "CARD_COMPLETED", createdAt: { gte: since }, card: { isArchived: false } },
+      distinct: ["cardId"],
+      select: { cardId: true },
     }),
     prisma.comment.findMany({
       where: { card: { column: { projectId } }, createdAt: { gte: since } },
       select: { authorId: true, author: { select: { id: true, name: true } } },
     }),
+    // Diger uc sorgunun aksine burada isArchived filtresi yoktu: arsivlenmis
+    // eski kartlar "bekleyen durgun kart" olarak sayilip panoda 0 durgun kart
+    // varken bile yuksek bir sayi raporluyordu.
     prisma.card.count({
       where: {
         column: { projectId, isDone: false },
+        isArchived: false,
         lastActivityAt: { lt: new Date(Date.now() - STALE_DAYS * 24 * 60 * 60 * 1000) },
       },
     }),

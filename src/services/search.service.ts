@@ -52,7 +52,10 @@ export async function searchOrganization(organizationId: string, userId: string,
   const anahtar = parseCardKey(trimmed);
   if (anahtar) {
     const kart = await findCardByKey(organizationId, trimmed);
-    if (kart && visibleProjectIds.has(kart.column.project.id)) {
+    // Arsivlenmis kart elenir: board/dashboard/roadmap/insight hepsi
+    // isArchived=false suzuyor, arama tek istisna olmamali. Anahtarla gelen
+    // arsivli kart sonuc olarak donmez, asagidaki metin aramasina duser.
+    if (kart && !kart.isArchived && visibleProjectIds.has(kart.column.project.id)) {
       return {
         cards: [
           {
@@ -71,7 +74,12 @@ export async function searchOrganization(organizationId: string, userId: string,
     }
   }
 
-  const pattern = `%${trimmed}%`;
+  // ILIKE joker karakterleri kacirilir: parametre baglamasi SQL enjeksiyonunu
+  // engelliyor ama "%" ve "_" hala DESEN olarak yorumlaniyordu. Kacirilmadan
+  // "__" arayan kullanici `%__%` deseniyle org'daki tum kartlari dokerdi.
+  // Ters bolu de kacirilmali, yoksa kendisi kacis karakteri sayilir.
+  const kacirilmis = trimmed.replace(/[\\%_]/g, "\\$&");
+  const pattern = `%${kacirilmis}%`;
 
   const rows = await prisma.$queryRaw<SearchRow[]>(Prisma.sql`
     SELECT
@@ -89,9 +97,10 @@ export async function searchOrganization(organizationId: string, userId: string,
     JOIN "Project" p ON p.id = col."projectId"
     WHERE p."organizationId" = ${organizationId}
       AND p.id IN (${Prisma.join([...visibleProjectIds])})
+      AND c."isArchived" = false
       AND (
-        unaccent(c.title) ILIKE unaccent(${pattern})
-        OR unaccent(COALESCE(c.description, '')) ILIKE unaccent(${pattern})
+        unaccent(c.title) ILIKE unaccent(${pattern}) ESCAPE '\\'
+        OR unaccent(COALESCE(c.description, '')) ILIKE unaccent(${pattern}) ESCAPE '\\'
       )
     ORDER BY c."lastActivityAt" DESC
     LIMIT 25

@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { NotFoundError, ForbiddenError } from "@/utils/errors";
+import { NotFoundError, ForbiddenError, ValidationError } from "@/utils/errors";
 import { broadcastToOrganization, SocketEvents } from "@/server/socket";
 import type { CreateChatMessageInput, ListChatMessagesInput } from "@/schemas/chat.schema";
 
@@ -33,18 +33,31 @@ export async function getMessages(
   let cursorFilter = {};
   if (input.before) {
     await checkOrganizationAccess(organizationId, userId);
-    const cursorMessage = await prisma.chatMessage.findUnique({
-      where: { id: input.before },
-      select: { createdAt: true },
+    // Imlec org'a kapsanmali: findUnique ile aranirsa baska bir organizasyonun
+    // mesaj id'si de kabul edilir ve onun createdAt'i bizim sorgumuza filtre olur.
+    const cursorMessage = await prisma.chatMessage.findFirst({
+      where: { id: input.before, organizationId },
+      select: { id: true, createdAt: true },
     });
-    if (cursorMessage) {
-      cursorFilter = { createdAt: { lt: cursorMessage.createdAt } };
-    }
+    // Imlec bulunamazsa (silinmis mesaj, hatali id) eskiden cursorFilter bos
+    // kalip sorgu EN YENI mesajlari donduruyordu; istemci bunlari listenin
+    // ustune ekleyince ayni mesajlar tekrarlaniyor ve sonsuz kaydirma bitmiyordu.
+    // Sessizce yok saymak yerine acikca hata veriyoruz.
+    if (!cursorMessage) throw new ValidationError("Geçersiz sayfalama imleci");
+    // Ayni milisaniyeye denk gelen mesajlarin atlanmamasi/tekrarlanmamasi icin
+    // imlec (createdAt, id) ikili anahtari uzerinden karsilastiriliyor.
+    cursorFilter = {
+      OR: [
+        { createdAt: { lt: cursorMessage.createdAt } },
+        { createdAt: cursorMessage.createdAt, id: { lt: cursorMessage.id } },
+      ],
+    };
   }
 
   const messagesQuery = prisma.chatMessage.findMany({
     where: { organizationId, ...cursorFilter },
-    orderBy: { createdAt: "desc" },
+    // Ikili anahtarli imlecle tutarli olmasi icin siralama da (createdAt, id).
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     take: input.limit,
     include: {
       author: { select: { id: true, name: true, email: true } },

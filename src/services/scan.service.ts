@@ -8,6 +8,12 @@ const DEADLINE_RISK_HOURS = 48;
 
 // Ayni kart/sutun icin okunmamis bir bildirim zaten varsa tekrar
 // olusturma - aksi halde her gece ayni sey icin spam atariz.
+//
+// Tekillestirme artik mesaj METNINE degil kimlige bakiyor: mesaj kartin
+// basligini tasidigi icin kart yeniden adlandirildiginda eski karsilastirma
+// kirilip ayni kart icin ikinci bir bildirim uretiliyordu. cardId varsa onun
+// uzerinden, yoksa (karta bagli olmayan WIP gibi tipler) eskisi gibi mesaj
+// uzerinden tekillestiriyoruz.
 async function notifyOnce(
   userId: string,
   type: NotificationType,
@@ -15,7 +21,9 @@ async function notifyOnce(
   cardId?: string,
 ) {
   const existing = await prisma.notification.findFirst({
-    where: { userId, type, message, read: false },
+    where: cardId
+      ? { userId, type, cardId, read: false }
+      : { userId, type, message, read: false },
   });
   if (existing) return;
 
@@ -87,7 +95,11 @@ export async function scanWipExceeded() {
       id: true,
       name: true,
       wipLimit: true,
-      project: { select: { ownerId: true } },
+      // Proje adi da cekiliyor: WIP bildiriminde cardId olmadigi icin
+      // tekillestirme mesaj metnine dusuyor. Mesaj yalnizca sutun adini
+      // tasiyinca ayni kisinin farkli projelerindeki ayni adli sutunlar
+      // (orn. "In Progress") tek bildirimde cakisip digerlerini bastiriyordu.
+      project: { select: { ownerId: true, name: true } },
       _count: { select: { cards: true } },
     },
   });
@@ -99,7 +111,7 @@ export async function scanWipExceeded() {
       await notifyOnce(
         col.project.ownerId,
         "WIP_EXCEEDED",
-        `"${col.name}" sütunu WIP limitini (${col.wipLimit}) aştı`,
+        `"${col.project.name}" projesindeki "${col.name}" sütunu WIP limitini (${col.wipLimit}) aştı`,
       );
     }
   }
