@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { verifyToken } from "@/utils/jwt";
 import { prisma } from "@/lib/prisma";
 import { errorResponse } from "@/utils/api-response";
-import { TOKEN_ONEKI, verifyApiToken } from "@/services/api-token.service";
+import { TOKEN_ONEKI, verifyApiToken, hesapYonetimiUcuMu } from "@/services/api-token.service";
 
 export type AuthenticatedRequest = NextRequest & {
   user: { id: string; name: string; email: string };
@@ -69,6 +69,21 @@ export async function authenticate(request: NextRequest) {
 
     if (!sahip) {
       return errorResponse("API anahtarı geçersiz veya iptal edilmiş", 401, "INVALID_API_TOKEN");
+    }
+
+    // API anahtarinin kapsami/suresi yok; bu yuzden hesap yonetimi uclari
+    // (yeni anahtar uretme/iptal, profil guncelleme) anahtarla kapali.
+    // Aksi halde sizan bir anahtar kendisiyle ikinci bir anahtar uretip
+    // iptalden sonra da erisimini surdurebilirdi.
+    // nextUrl testlerdeki sahte isteklerde bulunmayabiliyor; taban veren
+    // URL kurucusu hem mutlak hem goreli adreste yolu dogru cikariyor.
+    const yol = request.nextUrl?.pathname || new URL(request.url ?? "/", "http://yerel").pathname;
+    if (hesapYonetimiUcuMu(yol, request.method)) {
+      return errorResponse(
+        "Bu işlem API anahtarıyla yapılamaz, oturum açmanız gerekir",
+        403,
+        "API_TOKEN_FORBIDDEN",
+      );
     }
 
     (request as AuthenticatedRequest).user = sahip;

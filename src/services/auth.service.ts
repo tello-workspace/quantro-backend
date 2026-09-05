@@ -5,6 +5,7 @@ import { signToken } from "@/utils/jwt";
 import { AppError, UnauthorizedError, ValidationError } from "@/utils/errors";
 import { sendPasswordResetEmail, sendVerificationEmail, hasValidMxRecord } from "@/utils/email";
 import { encryptSecret } from "@/utils/crypto";
+import { guvenliWebhookUrlDogrula, WebhookGuvenlikHatasi } from "@/utils/webhook-security";
 import type {
   RegisterInput,
   LoginInput,
@@ -16,11 +17,22 @@ import type {
 } from "@/schemas/auth.schema";
 
 const SALT_ROUNDS = 10;
+// Kullanıcı bulunamadığında bile bcrypt maliyetini ödeyebilmek için kullanılan
+// sabit hash (SALT_ROUNDS=10 ile üretilmiştir). Gizli bir değer değildir ve
+// hiçbir parolayla eşleşmesi beklenmez; tek işlevi login'deki "kullanıcı yok"
+// dalının da aynı süreyi harcamasını sağlamak.
+const DUMMY_PASSWORD_HASH = "$2a$10$abcdefghijklmnopqrstuu2ihMH8f8gdoj9cbwjEdqScHQnkrEBOe";
 const RESET_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 saat
 const VERIFICATION_TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 saat - onboarding akisi, reset'ten daha uzun
 
 function hashToken(token: string): string {
   return crypto.createHash("sha256").update(token).digest("hex");
+}
+
+// Prisma'nın unique kısıt ihlali (P2002) kodunu tanır. Prisma hata sınıfını
+// import etmeden, yalnızca kod alanına bakarak kontrol ediyoruz.
+function benzersizlikHatasiMi(err: unknown): boolean {
+  return typeof err === "object" && err !== null && (err as { code?: string }).code === "P2002";
 }
 
 function getFrontendUrl(): string {
@@ -77,31 +89,45 @@ export async function register(input: RegisterInput): Promise<RegisterResult> {
 
   const passwordHash = await bcrypt.hash(input.password, SALT_ROUNDS);
 
-  const user = await prisma.user.create({
-    data: {
-      name: input.name,
-      email: input.email,
-      passwordHash,
-      emailVerifiedAt: new Date(), // Otomatik doğrulanmış
-    },
-  });
+  // Yukarıdaki findUnique ile buradaki create arasında aynı email için ikinci
+  // bir istek geçebilir (kontrol-sonra-yaz yarışı). O durumda Prisma unique
+  // kısıtına takılıp P2002 fırlatır; bu bir AppError olmadığı için kullanıcıya
+  // 500 dönerdi. 201 ile 500 arasındaki bu gözlemlenebilir fark, yukarıdaki
+  // hesap numaralandırma korumasını da delerdi. Çakışmada "email zaten kayıtlı"
+  // dalıyla aynı başarılı yanıtı döndürüyoruz.
+  try {
+    const user = await prisma.user.create({
+      data: {
+        name: input.name,
+        email: input.email,
+        passwordHash,
+        emailVerifiedAt: new Date(), // Otomatik doğrulanmış
+      },
+    });
 
-  // Email doğrulama maili gönderilmez - kullanıcı anında doğrulanmış sayılır
-  // await issueVerificationEmail(user.id, user.email); // İptal edildi
+    // Email doğrulama maili gönderilmez - kullanıcı anında doğrulanmış sayılır
+    // await issueVerificationEmail(user.id, user.email); // İptal edildi
 
-  return { verificationRequired: false, email: user.email };
+    return { verificationRequired: false, email: user.email };
+  } catch (err) {
+    if (benzersizlikHatasiMi(err)) {
+      return { verificationRequired: false, email: input.email };
+    }
+    throw err;
+  }
 }
 
 export async function login(input: LoginInput): Promise<AuthResult> {
   const user = await prisma.user.findUnique({ where: { email: input.email } });
 
-  if (!user) {
-    throw new UnauthorizedError("Email veya şifre hatalı");
-  }
+  // Hesap numaralandırmasını önle: kullanıcı yokken bcrypt'i hiç çalıştırmadan
+  // dönmek, cevap süresi farkıyla (birkaç ms'e karşı ~100 ms) "bu email sistemde
+  // kayıtlı" bilgisini sızdırıyordu. register() bu önlemi zaten alıyor (sahte
+  // bcrypt.hash adımı); login'de de kullanıcı yoksa sabit bir hash'e karşı
+  // karşılaştırma yaparak iki dalın süresini eşitliyoruz.
+  const isValid = await bcrypt.compare(input.password, user?.passwordHash ?? DUMMY_PASSWORD_HASH);
 
-  const isValid = await bcrypt.compare(input.password, user.passwordHash);
-
-  if (!isValid) {
+  if (!user || !isValid) {
     throw new UnauthorizedError("Email veya şifre hatalı");
   }
 
@@ -230,6 +256,16 @@ export async function resetPassword(input: ResetPasswordInput): Promise<void> {
       where: { userId: resetToken.userId, usedAt: null },
       data: { usedAt: new Date() },
     }),
+    // Parola sifirlama "hesabi geri aliyorum" hamlesidir; sadece hash'i
+    // degistirmek yetmiyordu cunku kullanicinin adina isleyen API anahtarlari
+    // (qtr_...) SURESIZ ve parolayla hicbir baglari yok - saldirgan bir anahtar
+    // uretmisse sifre degisse bile kalici erisimini koruyordu. Ayni
+    // transaction'da aktif anahtarlarin hepsini iptal ediyoruz ki sifirlama
+    // gercekten tum erisim yollarini kapatsin.
+    prisma.apiToken.updateMany({
+      where: { userId: resetToken.userId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    }),
   ]);
 }
 
@@ -283,7 +319,31 @@ export async function getMe(userId: string) {
   return toProfileResponse(user);
 }
 
+// GUVENLIK: aiBaseUrl kullanicinin verdigi bir adrese SUNUCUDAN istek
+// atilmasina yol acar (bkz. ai.service.ts:getProvider - chat/fill/insights
+// hepsi bu URL'e POST atar). OutgoingWebhook.url ile BIREBIR ayni SSRF
+// riski (ozel/yerel IP'lere, bulut metadata servisine erisim) ama bu alan
+// hicbir zaman dogrulanmiyordu - githubUrl/linkedinUrl bile z.string().url()
+// kullanirken aiBaseUrl duz metin olarak kabul ediliyordu. Ayni dogrulamayi
+// (https-only + ozel/yerel IP engeli + DNS rebinding kontrolu) burada da
+// uyguluyoruz.
+async function assertGuvenliAiBaseUrl(url: string | null | undefined): Promise<void> {
+  if (!url) return; // bos/null = varsayilan saglayici URL'i kullanilir, risk yok
+  try {
+    await guvenliWebhookUrlDogrula(url);
+  } catch (err) {
+    if (err instanceof WebhookGuvenlikHatasi) {
+      throw new ValidationError(`Geçersiz AI taban URL'i: ${err.message}`);
+    }
+    throw err;
+  }
+}
+
 export async function updateProfile(userId: string, input: UpdateProfileInput) {
+  if (input.aiBaseUrl !== undefined) {
+    await assertGuvenliAiBaseUrl(input.aiBaseUrl);
+  }
+
   const user = await prisma.user.update({
     where: { id: userId },
     data: {

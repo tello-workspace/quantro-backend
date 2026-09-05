@@ -128,3 +128,30 @@ export async function verifyApiToken(ham: string): Promise<TokenSahibi | null> {
 
   return kayit.user;
 }
+
+// Anahtarin son kullanma tarihi ve kapsami (scope) yok: dogrulanan anahtar
+// sahibinin TUM yetkisini tasiyor. Bunun en tehlikeli sonucu, sizan bir
+// anahtarin KENDI KALICILIGINI saglayabilmesi: anahtarla POST
+// /api/me/api-tokens cagirip ikinci bir anahtar uretilirse, kullanici
+// sizan anahtari iptal etse bile erisim surer. Ayni sekilde PATCH
+// /api/auth/me ile profildeki aiApiKey/aiBaseUrl degistirilebilirdi.
+//
+// Kapsam alani semaya eklenene kadarki asgari onlem: hesap yonetimi uclari
+// API anahtariyla gelen isteklere KAPALI, yalnizca gercek oturum (JWT)
+// ile acik. Okuma uclari (GET) kasitli olarak disarida - listeleme sadece
+// on ek donduruyor ve MCP tarafinin mevcut davranisini bozmuyor.
+const HESAP_YONETIMI_UCLARI: ReadonlyArray<{ yol: RegExp; metotlar: readonly string[] }> = [
+  // Anahtar uretme/iptal: anahtarin kendini cogaltmasini ve baska
+  // anahtarlari iptal etmesini engeller.
+  { yol: /^\/api\/me\/api-tokens(\/|$)/, metotlar: ["POST", "PUT", "PATCH", "DELETE"] },
+  // Profil guncelleme: hassas alanlar (aiApiKey, aiBaseUrl) burada.
+  { yol: /^\/api\/auth\/me\/?$/, metotlar: ["PATCH", "PUT"] },
+];
+
+/** Verilen yol+metot yalnizca JWT oturumuyla kullanilabilen bir hesap yonetimi ucu mu? */
+export function hesapYonetimiUcuMu(pathname: string, method: string): boolean {
+  const buyukMetot = method.toUpperCase();
+  return HESAP_YONETIMI_UCLARI.some(
+    (kural) => kural.yol.test(pathname) && kural.metotlar.includes(buyukMetot),
+  );
+}

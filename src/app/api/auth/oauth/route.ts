@@ -6,8 +6,16 @@ import { AppError } from "@/utils/errors";
 
 interface SupabaseUserResponse {
   email?: string;
+  email_confirmed_at?: string | null;
+  confirmed_at?: string | null;
+  app_metadata?: { provider?: string };
   user_metadata?: { name?: string; full_name?: string };
 }
+
+// Bu uctan yalnizca e-postayi kendisi dogrulayan saglayicilar kabul edilir.
+// Supabase'in "email" (e-posta/parola) saglayicisi listede yok: o akista
+// adresin gercekten kayit olana ait oldugunun kaniti yok.
+const IZINLI_SAGLAYICILAR = ["google", "apple"];
 
 // POST /api/auth/oauth - Supabase Auth (Google vb.) ile giris yapmis bir
 // kullanicinin access token'ini dogrular, kendi User tablomuzda karsiligini
@@ -43,6 +51,22 @@ export async function POST(request: NextRequest) {
     const supabaseUser = (await verifyRes.json()) as SupabaseUserResponse;
     if (!supabaseUser.email) {
       return errorResponse("Saglayicidan email alinamadi", 400, "OAUTH_ERROR");
+    }
+
+    // Token'in gecerli olmasi email'in dogrulanmis oldugunu GOSTERMEZ. Supabase
+    // tarafinda email onayi kapaliysa saldirgan kurbanin adresiyle kayit olup
+    // gecerli bir token alabilir; oauthLogin email'i tek anahtar kabul ettigi
+    // icin bu dogrudan mevcut Quantro hesabinin ele gecirilmesi demek.
+    if (!supabaseUser.email_confirmed_at && !supabaseUser.confirmed_at) {
+      return errorResponse("Email adresi dogrulanmamis", 401, "UNAUTHORIZED");
+    }
+
+    // Ayni sebeple token'in hangi akistan geldigi de onemli: "email" (parola)
+    // saglayicisiyla alinmis bir token bu uctan ASLA oturum acmamali, cunku
+    // burada e-posta sahipligi kanitlanmis olmuyor.
+    const saglayici = supabaseUser.app_metadata?.provider;
+    if (!saglayici || !IZINLI_SAGLAYICILAR.includes(saglayici)) {
+      return errorResponse("Desteklenmeyen giris yontemi", 401, "UNAUTHORIZED");
     }
 
     const name =
