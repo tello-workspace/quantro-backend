@@ -3,6 +3,7 @@ import { runDailyDigest } from "@/services/digest.service";
 import { successResponse, errorResponse, handleApiError } from "@/utils/api-response";
 import { authenticate, AuthenticatedRequest } from "@/middleware/auth";
 import { AppError, ForbiddenError } from "@/utils/errors";
+import { checkCronTriggerLimit } from "@/middleware/cronTriggerLimit";
 import { prisma } from "@/lib/prisma";
 
 // /api/scan ile ayni yetkilendirme deseni - bkz. o dosyadaki not.
@@ -22,7 +23,10 @@ async function authorizeCronRequest(request: NextRequest) {
   if (!adminMembership) {
     throw new ForbiddenError("Bu işlemi tetikleme yetkiniz yok");
   }
-  return null;
+  // /api/scan ile ayni gerekce: bu uc de TUM platformun kullanicilarina
+  // e-posta gonderiyor, sayaci olmadigi icin herhangi bir org'un admini
+  // istedigi siklikta ozet postasi tetikleyebiliyordu.
+  return checkCronTriggerLimit("digest", user.id);
 }
 
 export async function POST(request: NextRequest) {

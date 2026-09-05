@@ -3,6 +3,7 @@ import { runNightlyScan } from "@/services/scan.service";
 import { successResponse, errorResponse, handleApiError } from "@/utils/api-response";
 import { authenticate, AuthenticatedRequest } from "@/middleware/auth";
 import { AppError, ForbiddenError } from "@/utils/errors";
+import { checkCronTriggerLimit } from "@/middleware/cronTriggerLimit";
 import { prisma } from "@/lib/prisma";
 
 // Bu endpoint TUM organizasyonlardaki TUM projeleri tarar - eskiden sadece
@@ -29,7 +30,12 @@ async function authorizeCronRequest(request: NextRequest) {
   if (!adminMembership) {
     throw new ForbiddenError("Bu işlemi tetikleme yetkiniz yok");
   }
-  return null;
+  // ADMIN kontrolu "herhangi bir org'da admin mi" diye baktigi icin kendi
+  // org'unu acan herkes buraya girebiliyor, tarama ise TUM organizasyonlarda
+  // is uretiyor. Sayac olmadan istek dongude atilip yabanci panolarda tekrar
+  // tekrar otomasyon/bildirim tetikleyebiliyordu; manuel tetikleme kullanici
+  // basina saatte 1 ile sinirli (zamanlanmis is secret ile yukarida cikiyor).
+  return checkCronTriggerLimit("scan", user.id);
 }
 
 // Gece taramasini elle tetiklemek icin (test + gerekirse manuel calistirma).
