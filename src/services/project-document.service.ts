@@ -33,6 +33,47 @@ function extensionForMime(mimeType: string): string {
   return EXTENSION_BY_MIME[mimeType] ?? "bin";
 }
 
+// getDocumentText, extractedText null kaldigi surece HER okumada ayni pahali
+// ayristirmayi bastan deniyordu: kalici olarak metne cevrilemeyen bir belge
+// (bozuk / taranmis / sifreli PDF) MCP read_document'i her cagirdiginda
+// sunucuyu yeniden mesgul ediyordu. Basarisiz denemeyi surec belleginde kisa
+// sure isaretleyip bu pencerede yeniden denemeyi atliyoruz; yanit yine ayni
+// reason/detail ile dondugu icin disaridan gorunen davranis degismiyor.
+const EXTRACTION_RETRY_COOLDOWN_MS = 10 * 60 * 1000; // 10 dk
+
+type FailedExtraction = {
+  at: number;
+  reason: "unsupported" | "empty" | "error";
+  detail?: string;
+};
+
+const failedExtractions = new Map<string, FailedExtraction>();
+
+function recentExtractionFailure(documentId: string): FailedExtraction | undefined {
+  const kayit = failedExtractions.get(documentId);
+  if (!kayit) return undefined;
+  if (Date.now() - kayit.at > EXTRACTION_RETRY_COOLDOWN_MS) {
+    failedExtractions.delete(documentId);
+    return undefined;
+  }
+  return kayit;
+}
+
+function markExtractionFailure(
+  documentId: string,
+  reason: FailedExtraction["reason"],
+  detail?: string,
+) {
+  // Harita surekli buyumesin: esik asilinca suresi dolmus kayitlari temizle.
+  if (failedExtractions.size > 500) {
+    const simdi = Date.now();
+    for (const [id, kayit] of failedExtractions) {
+      if (simdi - kayit.at > EXTRACTION_RETRY_COOLDOWN_MS) failedExtractions.delete(id);
+    }
+  }
+  failedExtractions.set(documentId, { at: Date.now(), reason, detail });
+}
+
 
 export async function listDocuments(projectId: string, userId: string) {
   await checkProjectAccess(projectId, userId);
@@ -194,24 +235,35 @@ export async function getDocumentText(projectId: string, documentId: string, use
   let detail: string | undefined;
 
   if (!text && TEXT_EXTRACTABLE_MIME_TYPES.has(document.mimeType) && supabaseAdmin) {
-    const { data: fileData, error: downloadError } = await supabaseAdmin.storage
-      .from(PROJECT_DOCUMENTS_BUCKET)
-      .download(document.storagePath);
-
-    if (downloadError) {
-      reason = "error";
-      detail = `Dosya depodan okunamadi: ${downloadError.message}`;
+    // Yakin zamanda denenip basarisiz olduysa indirme + ayristirmayi hic
+    // baslatma; son denemenin sonucunu oldugu gibi don.
+    const sonHata = recentExtractionFailure(document.id);
+    if (sonHata) {
+      reason = sonHata.reason;
+      detail = sonHata.detail;
     } else {
-      const buffer = Buffer.from(await fileData.arrayBuffer());
-      const retry = await extractText(buffer, document.mimeType);
-      reason = retry.reason;
-      detail = retry.detail;
-      if (retry.text) {
-        text = retry.text;
-        await prisma.projectDocument.update({
-          where: { id: document.id },
-          data: { extractedText: retry.text },
-        });
+      const { data: fileData, error: downloadError } = await supabaseAdmin.storage
+        .from(PROJECT_DOCUMENTS_BUCKET)
+        .download(document.storagePath);
+
+      if (downloadError) {
+        reason = "error";
+        detail = `Dosya depodan okunamadi: ${downloadError.message}`;
+        markExtractionFailure(document.id, reason, detail);
+      } else {
+        const buffer = Buffer.from(await fileData.arrayBuffer());
+        const retry = await extractText(buffer, document.mimeType);
+        reason = retry.reason;
+        detail = retry.detail;
+        if (retry.text) {
+          text = retry.text;
+          await prisma.projectDocument.update({
+            where: { id: document.id },
+            data: { extractedText: retry.text },
+          });
+        } else if (retry.reason !== "ok") {
+          markExtractionFailure(document.id, retry.reason, retry.detail);
+        }
       }
     }
   }

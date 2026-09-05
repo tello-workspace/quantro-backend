@@ -50,14 +50,27 @@ export async function listAttachments(cardId: string, userId: string) {
     return attachments.map((a) => ({ ...a, downloadUrl: null }));
   }
 
-  return Promise.all(
-    attachments.map(async (a) => {
-      const { data } = await storage.storage
-        .from(ATTACHMENTS_BUCKET)
-        .createSignedUrl(a.storagePath, SIGNED_URL_TTL_SECONDS);
-      return { ...a, downloadUrl: data?.signedUrl ?? null };
-    }),
-  );
+  // Onceden her ek icin ayri createSignedUrl cagriliyordu: kart basina
+  // MAX_ATTACHMENTS_PER_CARD kadar (20) ayri Supabase ag istegi, hepsi tek
+  // HTTP isteginin icinde. Toplu ucla tek cagriya iniyoruz - board.service.ts
+  // (imzaliKapakUrlleri) ile ayni desen. Imzalama basarisiz olursa harita bos
+  // kalir ve downloadUrl yine null doner, yani sozlesme degismiyor.
+  const { data: signedList } = await storage.storage
+    .from(ATTACHMENTS_BUCKET)
+    .createSignedUrls(
+      attachments.map((a) => a.storagePath),
+      SIGNED_URL_TTL_SECONDS,
+    );
+
+  const urlByPath = new Map<string, string>();
+  for (const kayit of signedList ?? []) {
+    if (kayit.path && kayit.signedUrl) urlByPath.set(kayit.path, kayit.signedUrl);
+  }
+
+  return attachments.map((a) => ({
+    ...a,
+    downloadUrl: urlByPath.get(a.storagePath) ?? null,
+  }));
 }
 
 export async function uploadAttachment(
