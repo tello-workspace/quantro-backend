@@ -70,26 +70,51 @@ async function resolveRecipients(
 async function notifyRecipients(mail: { id: string; subject: string; senderName: string }, recipientIds: string[]) {
   if (recipientIds.length === 0) return;
 
-  await prisma.notification.createMany({
-    data: recipientIds.map((userId) => ({
-      userId,
-      type: "MAIL_RECEIVED" as const,
-      message: `${mail.senderName}: "${mail.subject}"`,
-    })),
+  // Sessize alma: bu yol prisma.notification'i DOGRUDAN cagirdigi icin
+  // notification.service'teki mutedSet filtresini atliyordu; kullanici
+  // /api/me/notification-preferences ile MAIL_RECEIVED'i kapatsa bile zil
+  // kaydi olusuyor ve NOTIFICATION_NEW yayinlaniyordu. Ayni filtreyi
+  // (broadcastToOrganization deseni) burada da uyguluyoruz.
+  const susturulmuslar = await prisma.userNotificationPref.findMany({
+    where: { enabled: false, type: "MAIL_RECEIVED", userId: { in: recipientIds } },
+    select: { userId: true },
   });
+  const susturulmusSet = new Set(susturulmuslar.map((p) => p.userId));
+  const bildirimAlacaklar = recipientIds.filter((id) => !susturulmusSet.has(id));
 
-  const createdAt = new Date().toISOString();
-  for (const userId of recipientIds) {
-    // NOTIFICATION_NEW: mevcut zil/toast altyapisi baska bir degisiklik
-    // gerekmeden bunu da gosterir. MAIL_NEW ise ayrica - acik Mail
-    // sayfasinin listeyi anlik tazelemesi icin ozel bir sinyal.
-    broadcastToUser(userId, SocketEvents.NOTIFICATION_NEW, {
-      userId,
-      type: "MAIL_RECEIVED",
-      message: `${mail.senderName}: "${mail.subject}"`,
-      read: false,
-      createdAt,
+  if (bildirimAlacaklar.length > 0) {
+    // createMany olusturulan satirlari dondurmedigi icin asagidaki socket
+    // yuku id'siz gidiyordu; istemci zil listesinde o bildirimi okundu
+    // isaretlemek icin PATCH /notifications/:id atamiyor, kayit sayfa
+    // yenilenene kadar okunmamis gorunuyordu. createManyAndReturn gercek
+    // kayitlari (id + createdAt dahil) veriyor. Ayni duzeltme
+    // notification.service.createBulkNotifications'ta da yapildi.
+    const olusanlar = await prisma.notification.createManyAndReturn({
+      data: bildirimAlacaklar.map((userId) => ({
+        userId,
+        type: "MAIL_RECEIVED" as const,
+        message: `${mail.senderName}: "${mail.subject}"`,
+      })),
+      select: { id: true, userId: true, type: true, message: true, read: true, createdAt: true },
     });
+
+    for (const bildirim of olusanlar) {
+      // NOTIFICATION_NEW: mevcut zil/toast altyapisi baska bir degisiklik
+      // gerekmeden bunu da gosterir.
+      broadcastToUser(bildirim.userId, SocketEvents.NOTIFICATION_NEW, {
+        id: bildirim.id,
+        userId: bildirim.userId,
+        type: bildirim.type,
+        message: bildirim.message,
+        read: bildirim.read,
+        createdAt: bildirim.createdAt.toISOString(),
+      });
+    }
+  }
+
+  // MAIL_NEW bir bildirim degil, acik Mail sayfasinin listeyi anlik
+  // tazelemesi icin ozel bir sinyal; bu yuzden sessize alanlara da gider.
+  for (const userId of recipientIds) {
     broadcastToUser(userId, SocketEvents.MAIL_NEW, {
       mailId: mail.id,
       subject: mail.subject,
@@ -239,6 +264,12 @@ export async function updateDraft(
 ) {
   const mevcut = await prisma.mail.findUnique({ where: { id: mailId } });
   if (!mevcut) throw new NotFoundError("Mesaj");
+  // senderId kontroli tek basina yetmiyor: organizasyondan cikarilan biri
+  // eski taslagini hala "kendi" taslagi olarak duzenleyip ORGANIZATION
+  // grubuyla tum uyelere gonderebiliyordu. resolveRecipients yalnizca
+  // ALICILARI uyelige karsi dogruluyor, GONDERENI degil - o kapiyi burada
+  // kapatiyoruz (composeMail zaten ayni kontrolu yapiyor).
+  await requireMembership(mevcut.organizationId, userId);
   if (mevcut.senderId !== userId) throw new ForbiddenError("Bu taslağı sadece yazarı düzenleyebilir");
   if (!mevcut.isDraft) throw new ValidationError("Gönderilmiş bir mesaj düzenlenemez");
 
@@ -257,25 +288,39 @@ export async function updateDraft(
     const nihaiAlicilar =
       recipientIds ?? (await prisma.mailRecipient.findMany({ where: { mailId }, select: { userId: true } })).map((r) => r.userId);
     if (nihaiAlicilar.length === 0) throw new ValidationError("En az bir alıcı seçilmeli");
+
+    // Satir 174'teki isDraft kontrolu ile asagidaki yazma arasinda kilit
+    // yoktu: "Gonder"e hizlica iki kez basildiginda (ya da istek yeniden
+    // denendiginde) iki PATCH de taslagi acik goruyor, ikisi de aliciyi
+    // silip yeniden ekliyor ve notifyRecipients iki kez calisiyordu.
+    // Taslagi burada KOSULLU ve atomik olarak "gonderildi"ye cekiyoruz;
+    // yarisi kaybeden istek 0 satir gunceller ve hicbir yan etki uretmez.
+    const devralma = await prisma.mail.updateMany({
+      where: { id: mailId, isDraft: true },
+      data: { isDraft: false, sentAt: new Date() },
+    });
+    if (devralma.count === 0) throw new ValidationError("Gönderilmiş bir mesaj düzenlenemez");
   }
 
-  if (recipientIds !== undefined) {
-    await prisma.mailRecipient.deleteMany({ where: { mailId } });
-  }
+  // Alici silme + yeniden ekleme ile govde guncellemesi tek islemde olsun;
+  // aksi halde arada dusen bir hata maili alicisiz birakabiliyordu.
+  const mail = await prisma.$transaction(async (tx) => {
+    if (recipientIds !== undefined) {
+      await tx.mailRecipient.deleteMany({ where: { mailId } });
+    }
 
-  const mail = await prisma.mail.update({
-    where: { id: mailId },
-    data: {
-      subject: input.subject,
-      body: input.body,
-      isDraft: gonder ? false : undefined,
-      sentAt: gonder ? new Date() : undefined,
-      recipients:
-        recipientIds !== undefined && recipientIds.length > 0
-          ? { createMany: { data: recipientIds.map((id) => ({ userId: id })) } }
-          : undefined,
-    },
-    select: mailListSelect,
+    return tx.mail.update({
+      where: { id: mailId },
+      data: {
+        subject: input.subject,
+        body: input.body,
+        recipients:
+          recipientIds !== undefined && recipientIds.length > 0
+            ? { createMany: { data: recipientIds.map((id) => ({ userId: id })) } }
+            : undefined,
+      },
+      select: mailListSelect,
+    });
   });
 
   if (gonder) {
@@ -392,12 +437,17 @@ export async function getMail(mailId: string, userId: string) {
     include: {
       sender: { select: { id: true, name: true } },
       attachments: true,
-      recipients: { select: { userId: true, read: true, user: { select: { id: true, name: true } } } },
+      recipients: { select: { userId: true, read: true, deletedAt: true, user: { select: { id: true, name: true } } } },
     },
   });
   if (!mail) throw new NotFoundError("Mesaj");
 
-  const alici = mail.recipients.find((r) => r.userId === userId);
+  // listMail ve getUnreadMailCount deletedAt:null suzuyor, burasi suzmuyordu:
+  // gelen kutusundan sildigi maili eski baglantiyla yeniden acabiliyor,
+  // ustelik GET yan etkisiyle okundu isaretleyip ek dosyalar icin imzali URL
+  // uretebiliyordu. Silinmis kayit artik alici sayilmiyor (gonderen ayrik
+  // olarak yazarMi ile kendi mesajina erisimini korur).
+  const alici = mail.recipients.find((r) => r.userId === userId && r.deletedAt === null);
   const yazarMi = mail.senderId === userId;
   if (!yazarMi && !alici) throw new ForbiddenError("Bu mesaja erişim yetkiniz yok");
 
@@ -450,6 +500,9 @@ export async function getMail(mailId: string, userId: string) {
 export async function deleteMail(mailId: string, userId: string) {
   const mail = await prisma.mail.findUnique({ where: { id: mailId }, select: { senderId: true, isDraft: true, organizationId: true } });
   if (!mail) throw new NotFoundError("Mesaj");
+  // updateDraft ile ayni bosluk: organizasyondan cikarilan kullanici gecerli
+  // JWT'siyle eski mesajlari uzerinde islem yapmaya devam edemesin.
+  await requireMembership(mail.organizationId, userId);
 
   if (mail.isDraft) {
     if (mail.senderId !== userId) throw new ForbiddenError("Bu taslağı sadece yazarı silebilir");
@@ -480,8 +533,15 @@ export async function uploadMailAttachment(
   userId: string,
   file: { name: string; type: string; size: number; buffer: Buffer },
 ) {
-  const mail = await prisma.mail.findUnique({ where: { id: mailId }, select: { senderId: true, isDraft: true } });
+  const mail = await prisma.mail.findUnique({
+    where: { id: mailId },
+    select: { senderId: true, isDraft: true, organizationId: true },
+  });
   if (!mail) throw new NotFoundError("Mesaj");
+  // Org uyeligi dusmus bir gonderen taslagina ek yukleyip depolama kotasini
+  // kullanmaya devam edemesin; taslak sonradan gonderilirse ek de tum
+  // organizasyona dagiliyor.
+  await requireMembership(mail.organizationId, userId);
   if (mail.senderId !== userId) throw new ForbiddenError("Bu mesaja sadece yazarı ek ekleyebilir");
   if (!mail.isDraft) throw new ValidationError("Gönderilmiş bir mesaja ek eklenemez");
 
@@ -510,8 +570,13 @@ export async function uploadMailAttachment(
 }
 
 export async function deleteMailAttachment(mailId: string, attachmentId: string, userId: string) {
-  const mail = await prisma.mail.findUnique({ where: { id: mailId }, select: { senderId: true, isDraft: true } });
+  const mail = await prisma.mail.findUnique({
+    where: { id: mailId },
+    select: { senderId: true, isDraft: true, organizationId: true },
+  });
   if (!mail) throw new NotFoundError("Mesaj");
+  // Ayni sinifin son ornegi: ek silme de yalnizca senderId'ye bakiyordu.
+  await requireMembership(mail.organizationId, userId);
   if (mail.senderId !== userId) throw new ForbiddenError("Bu mesajın eklerini sadece yazarı silebilir");
   if (!mail.isDraft) throw new ValidationError("Gönderilmiş bir mesajın eki silinemez");
 

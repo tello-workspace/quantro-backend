@@ -5,7 +5,9 @@ import { errorResponse } from "@/utils/api-response";
 // Aynı anda gelen duplicate istekleri engellemek için kullanılır.
 // Key formatı: "userId:path:bodyHash"
 // - İlk istek gelince kayda "processing" olarak işlenir
-// - Aynı key ile ikinci istek gelirse 409 Conflict döner
+// - Aynı key ile HÂLÂ işlenmekte olan bir istek varsa ikinci istek 409 Conflict döner
+// - İlk istek bitince kayıt "done" olur ve artık blok etmez; aynı gövdeyle
+//   atılan meşru bir sonraki istek normal işlenir
 // - 10 saniye sonra otomatik temizlenir
 
 interface IdempotencyRecord {
@@ -64,7 +66,11 @@ export function checkIdempotency(
   const key = generateKey(userId, path, body);
 
   const existing = store.get(key);
-  if (existing) {
+  // Sadece hâlâ işlenmekte olan bir kayıt çift istek sayılır. "done" kaydı,
+  // ilk isteğin çoktan bittiği anlamına gelir; aynı gövdeyle atılan MEŞRU
+  // ikinci istek (ör. aynı karta 5 sn arayla iki kez "tamam" yorumu, etiketi
+  // çıkarıp geri ekleme) 409 ile reddedilmemeli.
+  if (existing && existing.status === "processing") {
     const elapsed = Date.now() - existing.timestamp;
     console.log(
       `[IDEMPOTENCY] Duplicate request blocked: key=${key.substring(0, 60)}... elapsed=${elapsed}ms`,
@@ -84,15 +90,22 @@ export function checkIdempotency(
 
 /**
  * İşlem başarılı veya başarısız olduktan sonra idempotency kaydını temizler.
- * Kayıt 10 saniye daha "done" olarak kalır ki aynı key ile gelen
- * gecikmiş duplicate'ler de yakalansın.
+ * Kayıt 10 saniye daha "done" olarak durur ama artık yeni istekleri bloklamaz;
+ * sadece gecikmeli temizlik için tutulur.
  */
 export function clearIdempotency(key: string): void {
   const record = store.get(key);
   if (record) {
     record.status = "done";
-    // 10 saniye sonra tamamen temizle
-    setTimeout(() => store.delete(key), 10_000).unref();
+    // Gecikmeli temizlik, aradan geçen YENİ bir "processing" kaydını silmemeli:
+    // aksi halde biten isteğin zamanlayıcısı, aynı key ile başlamış sonraki
+    // isteğin çift tıklama korumasını erkenden düşürür.
+    setTimeout(() => {
+      const current = store.get(key);
+      if (current && current.status === "done") {
+        store.delete(key);
+      }
+    }, 10_000).unref();
   }
 }
 

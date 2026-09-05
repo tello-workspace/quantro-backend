@@ -67,8 +67,15 @@ export function bugunMu(d: Date | null, now: Date): boolean {
   return d.getUTCFullYear() === now.getUTCFullYear() && d.getUTCMonth() === now.getUTCMonth() && d.getUTCDate() === now.getUTCDate();
 }
 
+// bugunMu ile ayni gun tanimi (UTC), ama DB tarafinda kullanilabilecek bir
+// sinir olarak: lastDigestSentAt < gunBasi ise bugun henuz gonderilmemistir.
+export function gununBaslangiciUTC(now: Date): Date {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+}
+
 export async function runDailyDigest() {
   const now = new Date();
+  const gunBasi = gununBaslangiciUTC(now);
   const users = await prisma.user.findMany({
     where: { dailyDigestEnabled: true, emailVerifiedAt: { not: null } },
     select: { id: true, email: true, lastDigestSentAt: true },
@@ -77,22 +84,40 @@ export async function runDailyDigest() {
   let sent = 0;
   let skippedEmpty = 0;
   let skippedAlreadySent = 0;
+  // Gonderimi patlayan kullanicilar ayri sayilir: eskiden bunlar da
+  // isaretlendigi icin ikinci kosumda "zatenGonderilmisti" olarak gorunuyor
+  // ve toplu bir SMTP arizasi log'da hic fark edilmiyordu.
+  let failed = 0;
 
   for (const user of users) {
     // Ayni gun icinde iki kez tetiklenirse (in-process cron + GitHub Actions,
     // bkz. cron.ts) burada atlanir - gercek e-postanin iki kez gitmesini
     // onleyen TEK yer burasi.
-    if (bugunMu(user.lastDigestSentAt, now)) {
+    //
+    // Onceden "bugunMu(user.lastDigestSentAt) kontrolu -> sonra update"
+    // seklindeydi; iki kosum ayni dakikada baslayinca ikisi de listeyi
+    // isaretlenmemis halde okuyup ikisi de e-posta gonderiyordu (kullanici
+    // ozeti iki kez aliyordu). Kontrol ile isaretlemeyi KOSULLU TEK bir
+    // yazmada birlestiriyoruz: gunun isaretini yalnizca bir kosum
+    // alabilir, digerinin count'u 0 doner ve atlar.
+    const kilit = await prisma.user.updateMany({
+      where: {
+        id: user.id,
+        OR: [{ lastDigestSentAt: null }, { lastDigestSentAt: { lt: gunBasi } }],
+      },
+      data: { lastDigestSentAt: now },
+    });
+    if (kilit.count === 0) {
       skippedAlreadySent += 1;
       continue;
     }
 
     try {
+      // Isaretleme bos ozette de yapilmis oluyor (yukarida, gonderimden
+      // once) - "bugun icin kontrol edildi, gonderilecek bir sey yoktu" da
+      // bugunku calismayi tamamlar, aksi halde ayni gun tekrar tetiklenince
+      // yine ayni bos sonucu hesaplardik.
       const digest = await buildDigest(user.id);
-      // Isaretleme bos ozette de yapiliyor - "bugun icin kontrol edildi,
-      // gonderilecek bir sey yoktu" da bugunku calismayi tamamlar, aksi
-      // halde ayni gun tekrar tetiklenince yine ayni bos sonucu hesaplardik.
-      await prisma.user.update({ where: { id: user.id }, data: { lastDigestSentAt: now } });
 
       if (isEmpty(digest)) {
         skippedEmpty += 1;
@@ -101,12 +126,28 @@ export async function runDailyDigest() {
       await sendDailyDigestEmail(user.email, APP_URL, digest);
       sent += 1;
     } catch (error) {
+      failed += 1;
       console.error(`[digest] ${user.email} için özet gönderilemedi:`, error);
+
+      // Isaret yukarida gonderimden ONCE atiliyor (yarisi kapatmak icin).
+      // Gonderim/hesaplama patladiysa o isaret yerinde kalirsa ozet o gun
+      // icin kalicı olarak kayboluyordu: telafi tetiklemesi (GitHub Actions)
+      // kullaniciyi "bugun zaten gonderilmisti" diye atliyordu. Bu yuzden
+      // isareti eski degerine geri aliyoruz; kosul olarak `now` veriyoruz ki
+      // bu arada baska bir kosum yeni bir isaret aldiysa onu ezmeyelim.
+      try {
+        await prisma.user.updateMany({
+          where: { id: user.id, lastDigestSentAt: now },
+          data: { lastDigestSentAt: user.lastDigestSentAt },
+        });
+      } catch (geriAlmaHatasi) {
+        console.error(`[digest] ${user.email} için işaret geri alınamadı:`, geriAlmaHatasi);
+      }
     }
   }
 
   console.log(
-    `[digest] gönderildi=${sent} boşOlduğuİçinAtlandı=${skippedEmpty} zatenGönderilmişti=${skippedAlreadySent} toplamKullanıcı=${users.length}`,
+    `[digest] gönderildi=${sent} boşOlduğuİçinAtlandı=${skippedEmpty} zatenGönderilmişti=${skippedAlreadySent} hata=${failed} toplamKullanıcı=${users.length}`,
   );
-  return { sent, skippedEmpty, skippedAlreadySent, totalUsers: users.length };
+  return { sent, skippedEmpty, skippedAlreadySent, failed, totalUsers: users.length };
 }
