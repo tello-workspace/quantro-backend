@@ -3,6 +3,7 @@ import * as aiService from "@/services/ai.service";
 import { successResponse, errorResponse, handleApiError } from "@/utils/api-response";
 import { authenticate, AuthenticatedRequest } from "@/middleware/auth";
 import { checkAiRateLimit } from "@/middleware/rateLimit";
+import { checkProjectAccess } from "@/services/access-control.service";
 import { AppError } from "@/utils/errors";
 
 export async function POST(request: NextRequest) {
@@ -22,20 +23,9 @@ export async function POST(request: NextRequest) {
       return errorResponse("projectId ve title gerekli", 400, "VALIDATION_ERROR");
     }
 
-    // Projeye erişim kontrolü
-    const { prisma } = await import("@/lib/prisma");
-    const member = await prisma.organizationMember.findFirst({
-      where: {
-        userId: user.id,
-        organization: {
-          projects: { some: { id: projectId } },
-        },
-      },
-    });
-
-    if (!member) {
-      return errorResponse("Bu projeye erişim yetkiniz yok", 403, "FORBIDDEN");
-    }
+    // Projeye erişim kontrolü: bkz. ai/chat/route.ts'teki aynı not - ham org
+    // üyeliği yeterli değil, GUEST/PRIVATE/TEAM görünürlüğü de uygulanmalı.
+    await checkProjectAccess(projectId, user.id);
 
     const data = await aiService.generateCardDetails(projectId, user.id, title);
     return successResponse(data);

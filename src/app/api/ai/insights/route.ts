@@ -3,6 +3,7 @@ import * as aiService from "@/services/ai.service";
 import { successResponse, errorResponse, handleApiError } from "@/utils/api-response";
 import { authenticate, AuthenticatedRequest } from "@/middleware/auth";
 import { checkAiRateLimit } from "@/middleware/rateLimit";
+import { checkProjectAccess } from "@/services/access-control.service";
 import { AppError } from "@/utils/errors";
 
 export async function GET(request: NextRequest) {
@@ -22,20 +23,10 @@ export async function GET(request: NextRequest) {
       return errorResponse("projectId parametresi gerekli", 400, "VALIDATION_ERROR");
     }
 
-    // Kullanıcının projeye erişimi var mı kontrol et
-    const { prisma } = await import("@/lib/prisma");
-    const member = await prisma.organizationMember.findFirst({
-      where: {
-        userId: user.id,
-        organization: {
-          projects: { some: { id: projectId } },
-        },
-      },
-    });
-
-    if (!member) {
-      return errorResponse("Bu projeye erişim yetkiniz yok", 403, "FORBIDDEN");
-    }
+    // Kullanıcının projeye erişimi var mı kontrol et: bkz. ai/chat/route.ts'teki
+    // aynı not - ham org üyeliği yeterli değil, GUEST/PRIVATE/TEAM görünürlüğü
+    // de uygulanmalı.
+    await checkProjectAccess(projectId, user.id);
 
     const insights = await aiService.generateProjectInsights(projectId, user.id);
     return successResponse({ insights });
