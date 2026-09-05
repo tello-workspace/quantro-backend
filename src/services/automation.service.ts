@@ -1,8 +1,11 @@
 import { prisma } from "@/lib/prisma";
-import { NotFoundError, ForbiddenError } from "@/utils/errors";
+import { NotFoundError, ForbiddenError, ValidationError } from "@/utils/errors";
 import * as notificationService from "@/services/notification.service";
 import { logActivity } from "@/services/activity.service";
+import { notifyWatchers } from "@/services/watcher.service";
+import { notifyBlockerResolved } from "@/services/dependency.service";
 import { checkProjectAccess } from "@/services/access-control.service";
+import { checkColumnTransitionRules } from "@/services/column-transition.service";
 import { broadcastToProject, SocketEvents } from "@/server/socket";
 import { allocateCardNumber } from "@/services/card-key.service";
 import type { AutomationRule, AutomationTrigger } from "@prisma/client";
@@ -24,8 +27,70 @@ export async function listAutomationRules(projectId: string, userId: string) {
   });
 }
 
+// Kuralin tasidigi her yabanci anahtarin AYNI projeye ait oldugunu dogrular.
+// Sema (automation.schema.ts) bu alanlari serbest string kabul ediyor ve
+// checkProjectAdmin sadece URL'deki projeyi koruyor; aidiyet dogrulanmazsa
+// bir admin gövdeye BASKA bir organizasyonun kolon/etiket/kart id'sini yazip
+// kartlari o panoya tasitabiliyor ya da orada kart actirabiliyordu
+// (card.service.ts:395'te manuel yola konan proje sinirinin otomasyon
+// tarafindaki karsiligi). actionUserId icin de projenin organizasyonuna
+// uyelik sart - manuel atamada validateAssignees ayni sarti koyuyor.
+async function dogrulaKuralHedefleri(projectId: string, input: CreateAutomationRuleInput) {
+  const proje = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: { organizationId: true },
+  });
+  if (!proje) throw new NotFoundError("Proje");
+
+  const kolonIdler = [input.triggerColumnId, input.actionColumnId].filter(
+    (id): id is string => !!id,
+  );
+  const etiketIdler = [input.actionLabelId, input.conditionLabelId].filter(
+    (id): id is string => !!id,
+  );
+
+  if (kolonIdler.length > 0) {
+    const kolonlar = await prisma.column.findMany({
+      where: { id: { in: kolonIdler }, projectId },
+      select: { id: true },
+    });
+    const bulunan = new Set(kolonlar.map((k) => k.id));
+    if (kolonIdler.some((id) => !bulunan.has(id))) {
+      throw new ValidationError("Seçilen sütun bu projeye ait değil");
+    }
+  }
+
+  if (etiketIdler.length > 0) {
+    const etiketler = await prisma.label.findMany({
+      where: { id: { in: etiketIdler }, projectId },
+      select: { id: true },
+    });
+    const bulunan = new Set(etiketler.map((e) => e.id));
+    if (etiketIdler.some((id) => !bulunan.has(id))) {
+      throw new ValidationError("Seçilen etiket bu projeye ait değil");
+    }
+  }
+
+  if (input.sourceCardId) {
+    const kart = await prisma.card.findFirst({
+      where: { id: input.sourceCardId, column: { projectId } },
+      select: { id: true },
+    });
+    if (!kart) throw new ValidationError("Seçilen kart bu projeye ait değil");
+  }
+
+  if (input.actionUserId) {
+    const uye = await prisma.organizationMember.findFirst({
+      where: { organizationId: proje.organizationId, userId: input.actionUserId },
+      select: { userId: true },
+    });
+    if (!uye) throw new ValidationError("Seçilen kişi bu organizasyonun üyesi değil");
+  }
+}
+
 export async function createAutomationRule(projectId: string, input: CreateAutomationRuleInput, userId: string) {
   await checkProjectAdmin(projectId, userId);
+  await dogrulaKuralHedefleri(projectId, input);
 
   return prisma.automationRule.create({
     data: {
@@ -153,6 +218,10 @@ async function executeAction(rule: AutomationRule, cardId: string) {
       if (!rule.actionLabelId) return;
       const label = await prisma.label.findUnique({ where: { id: rule.actionLabelId } });
       if (!label) return; // etiket silinmis - sessizce atla
+      // Olusturmada aidiyet dogrulaniyor ama kural kurulduktan sonra etiket
+      // baska bir projeye tasinmis olabilir; baska projenin etiketini karta
+      // iliştirmek o etiketin adini/rengini disari sizdirir.
+      if (label.projectId !== rule.projectId) return;
       await prisma.cardLabel.upsert({
         where: { cardId_labelId: { cardId, labelId: rule.actionLabelId } },
         create: { cardId, labelId: rule.actionLabelId },
@@ -164,13 +233,50 @@ async function executeAction(rule: AutomationRule, cardId: string) {
       if (!rule.actionColumnId) return;
       const column = await prisma.column.findUnique({ where: { id: rule.actionColumnId } });
       if (!column) return;
+      // Kart baska bir projenin sutununa DUSMEMELI: manuel yol bunu
+      // card.service.ts:395'te ValidationError ile yasakliyor, otomasyon
+      // ayni sinira uymazsa kart karsi kiracinin panosunda beliriyor ve
+      // kart numarasi orada cakisiyor.
+      if (column.projectId !== rule.projectId) return;
 
-      const before = await prisma.card.findUnique({ where: { id: cardId }, select: { columnId: true } });
+      // title ve eski sutun adi da cekiliyor: asagidaki aktivite kaydi ile
+      // izleyici bildirimi manuel yoldaki (card.service.ts:443-455) metinlerin
+      // birebir aynisini uretebilsin diye.
+      const before = await prisma.card.findUnique({
+        where: { id: cardId },
+        select: { columnId: true, title: true, column: { select: { name: true } } },
+      });
       if (!before || before.columnId === rule.actionColumnId) return;
+
+      // Kolon gecis kurallari otomasyona da uygulanmali: ENFORCE modunda
+      // kullanicinin surukleyerek yapamayacagi gecisi otomasyonun sessizce
+      // yapmasi kolon kurallarini anlamsizlastiriyordu (bloklu kart Done'a
+      // dusuyordu). WARN modunda eski davranis korunuyor: tasima yapilir.
+      const ihlaller = await checkColumnTransitionRules(cardId, column);
+      if (ihlaller.length > 0 && column.transitionMode === "ENFORCE") {
+        console.warn(
+          `[automation] "${rule.name}" kurali "${column.name}" sutununun gecis kurallari nedeniyle uygulanmadi: ${ihlaller.join(", ")}`,
+        );
+        return;
+      }
+
+      // Hedef sutunda position yeniden hesaplanmali - eski sutundaki deger
+      // oldugu gibi kalirsa kart hedefte mevcut bir kartla ayni position'a
+      // dusuyor ve siralama kararsiz hale geliyor (manuel yol da ayni
+      // duzeltmeyi card.service.ts:453'te yapiyor).
+      const sonKart = await prisma.card.findFirst({
+        where: { columnId: rule.actionColumnId },
+        orderBy: { position: "desc" },
+        select: { position: true },
+      });
 
       const updated = await prisma.card.update({
         where: { id: cardId },
-        data: { columnId: rule.actionColumnId, lastActivityAt: new Date() },
+        data: {
+          columnId: rule.actionColumnId,
+          position: (sonKart?.position ?? 0) + 1,
+          lastActivityAt: new Date(),
+        },
       });
 
       // Manuel tasima ile ayni event: bunu yayinlamazsak diger acik
@@ -183,15 +289,72 @@ async function executeAction(rule: AutomationRule, cardId: string) {
         position: updated.position,
         projectId: rule.projectId,
       });
+
+      // Manuel tasimanin (card.service.ts:443-465) uc yan etkisi otomasyon
+      // yolunda da calismali; yoksa kartin Done'a nasil geldigine dair denetim
+      // izi kopuyor, karti izleyenlere hicbir bildirim gitmiyor ve hedef sutun
+      // isDone olsa bile bu karti bekleyen bagimli kartlarin sahipleri
+      // blokajin kalktigini ogrenemiyor. Aksiyonu tetikleyen "kullanici"
+      // otomasyonda kurali kuran kisi kabul ediliyor.
+      await logActivity({
+        projectId: rule.projectId,
+        userId: rule.createdById,
+        type: "CARD_MOVED",
+        cardId: updated.id,
+        data: { from: before.column.name, to: column.name },
+      });
+
+      await notifyWatchers(
+        updated.id,
+        rule.createdById,
+        `"${updated.title}" kartı "${before.column.name}" sütunundan "${column.name}" sütununa taşındı`,
+      );
+
+      if (column.isDone) {
+        await notifyBlockerResolved(updated.id, updated.title);
+        await logActivity({
+          projectId: rule.projectId,
+          userId: rule.createdById,
+          type: "CARD_COMPLETED",
+          cardId: updated.id,
+        });
+      }
       return;
     }
     case "ASSIGN_USER": {
       if (!rule.actionUserId) return;
-      await prisma.cardAssignee.upsert({
-        where: { cardId_userId: { cardId, userId: rule.actionUserId } },
-        create: { cardId, userId: rule.actionUserId },
-        update: {},
+
+      // Calisma aninda tekrar dogruluyoruz: kisi kural kurulduktan sonra
+      // organizasyondan cikarilmis olabilir. Org disi birine kart atamak
+      // sadece DB tutarsizligi degil - gunluk ozet e-postasi ve bildirim
+      // kart basligini o kisiye tasiyor (manuel yol validateAssignees ile
+      // ayni sarti koyuyor).
+      const proje = await prisma.project.findUnique({
+        where: { id: rule.projectId },
+        select: { organizationId: true },
       });
+      if (!proje) return;
+      const uye = await prisma.organizationMember.findFirst({
+        where: { organizationId: proje.organizationId, userId: rule.actionUserId },
+        select: { userId: true },
+      });
+      if (!uye) {
+        console.warn(`[automation] "${rule.name}": atanacak kisi artik organizasyon uyesi degil, atlandi`);
+        return;
+      }
+
+      // Tekrar korumasi: upsert atama zaten varken de sessizce gecip her
+      // seferinde YENI bir bildirim ve socket yayini uretiyordu. CARD_DUE_SOON
+      // tetikleyicisi ayni karti her gece (ustelik in-process cron + GitHub
+      // Actions olmak uzere iki kez) yeniden isledigi icin ayni atama bildirimi
+      // gunlerce birikiyordu - SEND_NOTIFICATION dalindaki ayni gerekceli
+      // kontrolun karsiligi. createMany + skipDuplicates hem tek sorguda
+      // atomik hem de count ile atamanin GERCEKTEN yeni olup olmadigini soyler.
+      const eklendi = await prisma.cardAssignee.createMany({
+        data: [{ cardId, userId: rule.actionUserId }],
+        skipDuplicates: true,
+      });
+      if (eklendi.count === 0) return;
 
       const card = await prisma.card.findUnique({
         where: { id: cardId },
@@ -262,6 +425,10 @@ async function executeCreateCardAction(rule: AutomationRule) {
 
   const column = await prisma.column.findUnique({ where: { id: rule.actionColumnId } });
   if (!column) return; // kolon silinmis - sessizce atla
+  // Kart numarasi allocateCardNumber(rule.projectId) ile KURALIN projesinden
+  // aliniyor; kolon baska bir projeye aitse o projede cakisan bir kart
+  // anahtari (ayni QNT-42) uretilir ve findCardByKey yanlis karti dondurur.
+  if (column.projectId !== rule.projectId) return;
 
   const lastCard = await prisma.card.findFirst({
     where: { columnId: rule.actionColumnId },

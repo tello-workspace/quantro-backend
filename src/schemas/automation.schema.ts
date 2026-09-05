@@ -56,6 +56,20 @@ export const createAutomationRuleSchema = z
   .refine((v) => v.actionType !== "CREATE_CARD" || (!!v.actionColumnId && !!v.actionMessage), {
     message: "Bu aksiyon için hedef sütun ve kart başlığı gerekli",
     path: ["actionColumnId"],
+  })
+  // Motor tarafinda CREATE_CARD ile SCHEDULED birbirine bagli: executeAction'in
+  // (automation.service.ts) switch'inde CREATE_CARD case'i YOK, executeCreateCardAction
+  // ise yalnizca SCHEDULED dongusunden cagriliyor ve diger aksiyonlari eliyor.
+  // Bu iki kombinasyon disindaki eslesmeler 201 ile olusup listede isActive=true
+  // gorunuyor ama HICBIR ZAMAN calismiyor, tek bir hata log'u bile dusmuyor.
+  // Uyumsuzlugu kural kurulurken reddediyoruz ki sessiz basarisizlik olmasin.
+  .refine((v) => v.actionType !== "CREATE_CARD" || v.trigger === "SCHEDULED", {
+    message: "Kart oluşturma aksiyonu yalnızca zamanlanmış tetikleyiciyle kullanılabilir",
+    path: ["actionType"],
+  })
+  .refine((v) => v.trigger !== "SCHEDULED" || v.actionType === "CREATE_CARD", {
+    message: "Zamanlanmış tetikleyici yalnızca kart oluşturma aksiyonunu destekler",
+    path: ["actionType"],
   });
 
 export const updateAutomationRuleSchema = z.object({
