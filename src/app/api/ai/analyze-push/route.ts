@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import * as aiService from "@/services/ai.service";
+import { anahtarlaKartTasi } from "@/services/github-webhook.service";
 import { successResponse, errorResponse, handleApiError } from "@/utils/api-response";
 import { authenticate, AuthenticatedRequest } from "@/middleware/auth";
 import { checkAiRateLimit } from "@/middleware/rateLimit";
@@ -51,6 +52,27 @@ export async function POST(request: NextRequest) {
 
     const userId = await resolveUserId(request, authorEmail);
 
+    // ANAHTAR ONCELIGI: commit mesajinda "QNT-42" gibi bir kart anahtari
+    // varsa gelistirici hangi kartla ilgilendigini zaten soylemis demektir.
+    // Deterministik yol hem hizli (tek sorgu, AI cagrisi yok) hem ucretsiz
+    // hem de yanilmaz; AI ancak anahtar yokken devreye giriyor.
+    //
+    // Hiz limiti bu daldan ONCE gelmiyor: sinir AI kullanimini korumak icin
+    // var, anahtar yolu saglayiciya hic gitmiyor.
+    const anahtarlaTasinanlar = await anahtarlaKartTasi(userId, String(commitMessage));
+    if (anahtarlaTasinanlar.length > 0) {
+      return successResponse({
+        movedCards: anahtarlaTasinanlar.map((k) => ({
+          cardId: k.cardId,
+          title: k.title,
+          reason: `Commit mesajındaki ${k.anahtar} referansı`,
+        })),
+        // Istemci (VS Code eklentisi) hangi yolun calistigini kullaniciya
+        // gosterebilsin: "AI tahmin etti" ile "sen soyledin" farkli seyler.
+        source: "card-key" as const,
+      });
+    }
+
     const rateLimitError = checkAiRateLimit(userId, "ai:analyze-push");
     if (rateLimitError) return rateLimitError;
 
@@ -59,7 +81,7 @@ export async function POST(request: NextRequest) {
       String(commitMessage),
       String(diff),
     );
-    return successResponse(result);
+    return successResponse({ ...result, source: "ai" as const });
   } catch (error) {
     if (error instanceof AppError) {
       return errorResponse(error.message, error.statusCode, error.code);

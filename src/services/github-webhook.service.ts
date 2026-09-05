@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { parseCardKey, formatCardKey } from "@/services/card-key.service";
 import { sistemKartTasi } from "@/services/card-move.service";
+import { checkProjectAccess } from "@/services/access-control.service";
 import type { GithubLinkKind, GithubRepoLink } from "@prisma/client";
 
 // GitHub olaylarini karta baglar ve karti tasir.
@@ -50,6 +51,78 @@ export function extractCardKeys(...metinler: (string | null | undefined)[]): str
   }
 
   return [...bulunanlar];
+}
+
+/**
+ * Push metnindeki kart anahtarlarindan DOGRUDAN tasima yapar (AI'siz).
+ *
+ * VS Code eklentisinin push analizi yolunda kullaniliyor: commit mesajinda
+ * "QNT-42" varsa gelistirici hangi kartla ilgilendigini zaten soylemis
+ * demektir, AI'a sormanin anlami yok - tahmin hem yavas hem maliyetli hem de
+ * yanilabilir.
+ *
+ * Hedef kolon projenin GitHub baglantisindaki branchColumnId'den geliyor.
+ * Baglanti ya da esleme yoksa hicbir sey yapilmaz ve cagiran AI yoluna
+ * duser: anahtar tek basina kartin NEREYE gidecegini soylemiyor.
+ */
+export async function anahtarlaKartTasi(
+  userId: string,
+  ...metinler: (string | null | undefined)[]
+): Promise<{ cardId: string; anahtar: string; title: string }[]> {
+  const anahtarlar = extractCardKeys(...metinler);
+  if (anahtarlar.length === 0) return [];
+
+  const tasinanlar: { cardId: string; anahtar: string; title: string }[] = [];
+
+  for (const anahtar of anahtarlar) {
+    const ayrilmis = parseCardKey(anahtar);
+    if (!ayrilmis) continue;
+
+    // Aday kart: kullanicinin uye oldugu bir organizasyonda, anahtari
+    // eslesen ve projesinde kullanilabilir bir GitHub kolon eslemesi olan.
+    const card = await prisma.card.findFirst({
+      where: {
+        number: ayrilmis.number,
+        isArchived: false,
+        column: {
+          project: {
+            key: ayrilmis.projectKey,
+            organization: { members: { some: { userId } } },
+            githubLink: { is: { isActive: true, branchColumnId: { not: null } } },
+          },
+        },
+      },
+      select: {
+        id: true,
+        title: true,
+        column: { select: { project: { select: { id: true, githubLink: { select: { branchColumnId: true } } } } } },
+      },
+    });
+    if (!card) continue;
+
+    const hedefColumnId = card.column.project.githubLink?.branchColumnId;
+    if (!hedefColumnId) continue;
+
+    // Org uyeligi tek basina yetmiyor: GUEST ve PRIVATE/TEAM gorunurlugu
+    // ayri bir kapi. Erisimi olmayan biri commit mesajina anahtar yazarak
+    // goremedigi bir karti oynatamamali.
+    try {
+      await checkProjectAccess(card.column.project.id, userId);
+    } catch {
+      continue;
+    }
+
+    const sonuc = await sistemKartTasi({
+      cardId: card.id,
+      hedefColumnId,
+      projectId: card.column.project.id,
+      aktorUserId: userId,
+      kaynakEtiketi: "push:kart-anahtari",
+    });
+    if (sonuc.tasindi) tasinanlar.push({ cardId: card.id, anahtar, title: card.title });
+  }
+
+  return tasinanlar;
 }
 
 /** refs/heads/feat/QNT-42-mail -> feat/QNT-42-mail. Dal degilse null. */

@@ -1,6 +1,11 @@
 import { describe, it, expect, afterAll } from "vitest";
 import crypto from "node:crypto";
-import { extractCardKeys, branchAdiCikar, handleEvent } from "@/services/github-webhook.service";
+import {
+  extractCardKeys,
+  branchAdiCikar,
+  handleEvent,
+  anahtarlaKartTasi,
+} from "@/services/github-webhook.service";
 import { githubImzasiDogrula, webhookSecretUret } from "@/utils/github-signature";
 import { prisma } from "@/lib/prisma";
 import { createWorkspace, createCard, cleanup, uniq } from "@/test/fixtures";
@@ -401,6 +406,67 @@ describe("handleEvent - guvenlik ve dayaniklilik", () => {
     const ilgisiz = await handleEvent({ link, event: "issues", deliveryId: uniq("d"), payload: {} });
     expect(ilgisiz.islendi).toBe(false);
   });
+
+  it("push metnindeki anahtar karti dogrudan tasir (AI'siz)", async () => {
+    const ws = await createWorkspace();
+    orgIds.push(ws.org.id);
+    userIds.push(ws.admin.id, ws.member.id, ws.outsider.id);
+
+    const inProgress = await prisma.column.create({
+      data: { projectId: ws.project.id, name: "In Progress", position: 1.5 },
+    });
+    const kart = await createCard(ws.todo.id, ws.admin.id);
+    await linkOlustur(ws.project.id, ws.admin.id, { branchColumnId: inProgress.id });
+
+    const tasinanlar = await anahtarlaKartTasi(ws.admin.id, `TST-${kart.number} mail zinciri duzeltildi`);
+
+    expect(tasinanlar.map((t) => t.anahtar)).toEqual([`TST-${kart.number}`]);
+    expect(await kartinKolonu(kart.id)).toBe(inProgress.id);
+  }, 60000);
+
+  it("GitHub baglantisi yoksa tasimaz - cagiran AI yoluna duser", async () => {
+    const ws = await createWorkspace();
+    orgIds.push(ws.org.id);
+    userIds.push(ws.admin.id, ws.member.id, ws.outsider.id);
+
+    const kart = await createCard(ws.todo.id, ws.admin.id);
+    // Baglanti kurulmamis: anahtar tek basina kartin NEREYE gidecegini
+    // soylemiyor, hedef kolon eslemesinden geliyor.
+
+    const tasinanlar = await anahtarlaKartTasi(ws.admin.id, `TST-${kart.number} bitti`);
+
+    expect(tasinanlar).toEqual([]);
+    expect(await kartinKolonu(kart.id)).toBe(ws.todo.id);
+  });
+
+  it("goremedigi projenin kartini anahtarla oynatamaz", async () => {
+    const ws = await createWorkspace();
+    orgIds.push(ws.org.id);
+    userIds.push(ws.admin.id, ws.member.id, ws.outsider.id);
+
+    // PRIVATE proje: member org uyesi ama ProjectMember degil, yani projeyi
+    // hic goremiyor. Org uyeligi tek basina yetseydi commit mesajina anahtar
+    // yazarak goremedigi karti oynatabilirdi.
+    await prisma.project.update({
+      where: { id: ws.project.id },
+      data: { visibility: "PRIVATE" },
+    });
+    const inProgress = await prisma.column.create({
+      data: { projectId: ws.project.id, name: "In Progress", position: 1.5 },
+    });
+    const kart = await createCard(ws.todo.id, ws.admin.id);
+    await linkOlustur(ws.project.id, ws.admin.id, { branchColumnId: inProgress.id });
+
+    const tasinanlar = await anahtarlaKartTasi(ws.member.id, `TST-${kart.number} elimden geldi`);
+
+    expect(tasinanlar).toEqual([]);
+    expect(await kartinKolonu(kart.id)).toBe(ws.todo.id);
+
+    // Sahibi icin ayni cagri CALISIYOR olmali - aksi halde test "her sey
+    // reddediliyor" diyerek bos gecerdi.
+    const sahipTasima = await anahtarlaKartTasi(ws.admin.id, `TST-${kart.number} elimden geldi`);
+    expect(sahipTasima).toHaveLength(1);
+  }, 60000);
 
   it("gecis kurallari ENFORCE ise tasimaz", async () => {
     const ws = await createWorkspace();
