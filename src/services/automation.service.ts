@@ -2,10 +2,8 @@ import { prisma } from "@/lib/prisma";
 import { NotFoundError, ForbiddenError, ValidationError } from "@/utils/errors";
 import * as notificationService from "@/services/notification.service";
 import { logActivity } from "@/services/activity.service";
-import { notifyWatchers } from "@/services/watcher.service";
-import { notifyBlockerResolved } from "@/services/dependency.service";
 import { checkProjectAccess } from "@/services/access-control.service";
-import { checkColumnTransitionRules } from "@/services/column-transition.service";
+import { sistemKartTasi } from "@/services/card-move.service";
 import { broadcastToProject, SocketEvents } from "@/server/socket";
 import { allocateCardNumber } from "@/services/card-key.service";
 import type { AutomationRule, AutomationTrigger } from "@prisma/client";
@@ -231,94 +229,22 @@ async function executeAction(rule: AutomationRule, cardId: string) {
     }
     case "MOVE_TO_COLUMN": {
       if (!rule.actionColumnId) return;
-      const column = await prisma.column.findUnique({ where: { id: rule.actionColumnId } });
-      if (!column) return;
-      // Kart baska bir projenin sutununa DUSMEMELI: manuel yol bunu
-      // card.service.ts:395'te ValidationError ile yasakliyor, otomasyon
-      // ayni sinira uymazsa kart karsi kiracinin panosunda beliriyor ve
-      // kart numarasi orada cakisiyor.
-      if (column.projectId !== rule.projectId) return;
 
-      // title ve eski sutun adi da cekiliyor: asagidaki aktivite kaydi ile
-      // izleyici bildirimi manuel yoldaki (card.service.ts:443-455) metinlerin
-      // birebir aynisini uretebilsin diye.
-      const before = await prisma.card.findUnique({
-        where: { id: cardId },
-        select: { columnId: true, title: true, column: { select: { name: true } } },
-      });
-      if (!before || before.columnId === rule.actionColumnId) return;
-
-      // Kolon gecis kurallari otomasyona da uygulanmali: ENFORCE modunda
-      // kullanicinin surukleyerek yapamayacagi gecisi otomasyonun sessizce
-      // yapmasi kolon kurallarini anlamsizlastiriyordu (bloklu kart Done'a
-      // dusuyordu). WARN modunda eski davranis korunuyor: tasima yapilir.
-      const ihlaller = await checkColumnTransitionRules(cardId, column);
-      if (ihlaller.length > 0 && column.transitionMode === "ENFORCE") {
-        console.warn(
-          `[automation] "${rule.name}" kurali "${column.name}" sutununun gecis kurallari nedeniyle uygulanmadi: ${ihlaller.join(", ")}`,
-        );
-        return;
-      }
-
-      // Hedef sutunda position yeniden hesaplanmali - eski sutundaki deger
-      // oldugu gibi kalirsa kart hedefte mevcut bir kartla ayni position'a
-      // dusuyor ve siralama kararsiz hale geliyor (manuel yol da ayni
-      // duzeltmeyi card.service.ts:453'te yapiyor).
-      const sonKart = await prisma.card.findFirst({
-        where: { columnId: rule.actionColumnId },
-        orderBy: { position: "desc" },
-        select: { position: true },
-      });
-
-      const updated = await prisma.card.update({
-        where: { id: cardId },
-        data: {
-          columnId: rule.actionColumnId,
-          position: (sonKart?.position ?? 0) + 1,
-          lastActivityAt: new Date(),
-        },
-      });
-
-      // Manuel tasima ile ayni event: bunu yayinlamazsak diger acik
-      // panolar (ve karti tasiyan otomasyonu tetikleyen kullanicinin
-      // KENDI panosu) kart yeni sutuna gecene kadar hicbir sey gormez.
-      broadcastToProject(rule.projectId, SocketEvents.CARD_MOVED, {
-        cardId: updated.id,
-        fromColumnId: before.columnId,
-        toColumnId: updated.columnId,
-        position: updated.position,
+      // Tasimanin kendisi ve TUM yan etkileri (proje siniri, kolon gecis
+      // kurallari, position hesabi, socket yayini, aktivite kaydi, izleyici
+      // ve blokaj-cozuldu bildirimleri) ortak modulde. GitHub entegrasyonu
+      // ayni yolu kullaniyor - bkz. card-move.service.ts.
+      //
+      // Aksiyonu tetikleyen "kullanici" kurali kuran kisi kabul ediliyor:
+      // otomasyonun arkasinda gercek bir istek sahibi yok ama denetim izinin
+      // bir kimlige baglanmasi gerekiyor.
+      await sistemKartTasi({
+        cardId,
+        hedefColumnId: rule.actionColumnId,
         projectId: rule.projectId,
+        aktorUserId: rule.createdById,
+        kaynakEtiketi: `automation:${rule.name}`,
       });
-
-      // Manuel tasimanin (card.service.ts:443-465) uc yan etkisi otomasyon
-      // yolunda da calismali; yoksa kartin Done'a nasil geldigine dair denetim
-      // izi kopuyor, karti izleyenlere hicbir bildirim gitmiyor ve hedef sutun
-      // isDone olsa bile bu karti bekleyen bagimli kartlarin sahipleri
-      // blokajin kalktigini ogrenemiyor. Aksiyonu tetikleyen "kullanici"
-      // otomasyonda kurali kuran kisi kabul ediliyor.
-      await logActivity({
-        projectId: rule.projectId,
-        userId: rule.createdById,
-        type: "CARD_MOVED",
-        cardId: updated.id,
-        data: { from: before.column.name, to: column.name },
-      });
-
-      await notifyWatchers(
-        updated.id,
-        rule.createdById,
-        `"${updated.title}" kartı "${before.column.name}" sütunundan "${column.name}" sütununa taşındı`,
-      );
-
-      if (column.isDone) {
-        await notifyBlockerResolved(updated.id, updated.title);
-        await logActivity({
-          projectId: rule.projectId,
-          userId: rule.createdById,
-          type: "CARD_COMPLETED",
-          cardId: updated.id,
-        });
-      }
       return;
     }
     case "ASSIGN_USER": {
