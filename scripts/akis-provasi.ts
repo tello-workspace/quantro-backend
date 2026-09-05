@@ -19,9 +19,10 @@
  * sonunda hepsini siler. Mevcut takim verisine dokunmaz.
  */
 import "dotenv/config";
+import crypto from "node:crypto";
 import { prisma } from "@/lib/prisma";
 import { signToken } from "@/utils/jwt";
-import { createWorkspace, createUser, cleanup, uniq } from "@/test/fixtures";
+import { createWorkspace, createUser, createCard, cleanup, uniq } from "@/test/fixtures";
 
 const API = process.env.API ?? "http://localhost:4000/api";
 
@@ -41,6 +42,15 @@ interface Sonuc {
 const sonuclar: Sonuc[] = [];
 let suankiAkis = "-";
 
+/**
+ * Govdenin TEK serilestirmesi. Webhook imzasi gonderilen baytlarin uzerinden
+ * hesaplandigi icin imzalayan ve gonderen taraf ayni metni gormek zorunda -
+ * iki ayri JSON.stringify cagrisi ayni sonucu verse de tek kaynak guvenli.
+ */
+function govdeMetni(govde: unknown): string {
+  return JSON.stringify(govde);
+}
+
 function akis(ad: string) {
   suankiAkis = ad;
 }
@@ -51,17 +61,24 @@ interface CagriSecenek {
   beklenen?: number[];
   /** Yanit govdesini dondurup sonraki adimda kullanmak icin. */
   sessiz?: boolean;
+  /**
+   * Ek istek basliklari. GitHub webhook provasinda imza (X-Hub-Signature-256)
+   * bu yoldan geciyor - imza GONDERILEN govdenin birebir uzerinden
+   * hesaplanmali, o yuzden asagida govde tek bir yerde serilestiriliyor.
+   */
+  basliklar?: Record<string, string>;
 }
 
 async function cagir(
   ad: string,
   yontem: Yontem,
   yol: string,
-  { token, govde, beklenen = [200, 201] }: CagriSecenek = {},
+  { token, govde, beklenen = [200, 201], basliklar }: CagriSecenek = {},
 ): Promise<{ status: number; data: any }> {
   const headers: Record<string, string> = {};
   if (token) headers.Authorization = `Bearer ${token}`;
   if (govde !== undefined) headers["Content-Type"] = "application/json";
+  Object.assign(headers, basliklar ?? {});
 
   let status = 0;
   let data: any = null;
@@ -69,7 +86,7 @@ async function cagir(
     const res = await fetch(`${API}${yol}`, {
       method: yontem,
       headers,
-      body: govde === undefined ? undefined : JSON.stringify(govde),
+      body: govde === undefined ? undefined : govdeMetni(govde),
     });
     status = res.status;
     const metin = await res.text();
@@ -390,8 +407,114 @@ async function main() {
     await cagir("scan sirri olmadan", "POST", "/scan", { beklenen: [401, 403] });
     await cagir("hata kayitlari (yabanci)", "GET", "/error-logs", { token: yabanciToken, beklenen: [200, 401, 403] });
 
-    // -------------------------------------------- 11. var olmayan kaynaklar
-    akis("11-yok-kaynak");
+    // ------------------------------------------------------------ 11. github
+    akis("11-github");
+    {
+      // Yeni bir kolon: dala push gelince kart buraya tasinacak.
+      const ghKolon = await prisma.column.create({
+        data: { projectId: ws.project.id, name: "In Progress (prova)", position: 1.5 },
+      });
+      const ghKart = await createCard(ws.todo.id, ws.admin.id, "GitHub prova karti");
+      const proje = await prisma.project.findUniqueOrThrow({
+        where: { id: ws.project.id },
+        select: { key: true },
+      });
+      const kartAnahtari = `${proje.key}-${ghKart.number}`;
+
+      await yasak(
+        "yabanci baglanti kuramaz",
+        "POST",
+        `/projects/${ws.project.id}/github-link`,
+        yabanciToken,
+        { owner: "merto", repo: "prova" },
+      );
+
+      const kurulum = await cagir("baglanti kur", "POST", `/projects/${ws.project.id}/github-link`, {
+        token: adminToken,
+        govde: { owner: "merto", repo: "prova-depo" },
+        beklenen: [201],
+      });
+      const linkId: string | undefined = kurulum.data?.data?.id;
+      const secret: string | undefined = kurulum.data?.data?.secret;
+
+      // Yabanci projenin kolonu eslenememeli (kiraci siniri).
+      await cagir("yabanci kolon eslemesi reddedilmeli", "PATCH", `/projects/${ws.project.id}/github-link`, {
+        token: adminToken,
+        govde: { branchColumnId: "clzzzzzzzzzzzzzzzzzzzzzzz" },
+        beklenen: [400, 422],
+      });
+
+      await cagir("kolon eslemesi", "PATCH", `/projects/${ws.project.id}/github-link`, {
+        token: adminToken,
+        govde: { branchColumnId: ghKolon.id },
+      });
+
+      if (linkId && secret) {
+        const yol = `/integrations/github/webhook/${linkId}`;
+        const yuk = {
+          ref: `refs/heads/feat/${kartAnahtari.toLowerCase()}-prova`,
+          commits: [{ message: `${kartAnahtari} prova` }],
+          repository: { full_name: "merto/prova-depo", default_branch: "main", html_url: "https://github.com/merto/prova-depo" },
+          sender: { login: "merto" },
+        };
+        const imza =
+          "sha256=" + crypto.createHmac("sha256", secret).update(govdeMetni(yuk), "utf8").digest("hex");
+
+        await cagir("imzasiz webhook -> 401", "POST", yol, { govde: yuk, beklenen: [401] });
+        await cagir("yanlis imzali webhook -> 401", "POST", yol, {
+          govde: yuk,
+          basliklar: { "x-github-event": "push", "x-github-delivery": uniq("d"), "x-hub-signature-256": "sha256=" + "0".repeat(64) },
+          beklenen: [401],
+        });
+
+        const teslimat = uniq("delivery");
+        await cagir("imzali push", "POST", yol, {
+          govde: yuk,
+          basliklar: { "x-github-event": "push", "x-github-delivery": teslimat, "x-hub-signature-256": imza },
+        });
+
+        // Kart gercekten tasindi mi - 200 donmesi tek basina yetmez.
+        const tasinan = await prisma.card.findUniqueOrThrow({
+          where: { id: ghKart.id },
+          select: { columnId: true },
+        });
+        sonuclar.push({
+          akis: suankiAkis,
+          ad: "kart hedef kolona tasindi",
+          yontem: "POST",
+          yol,
+          beklenen: [200],
+          gelen: tasinan.columnId === ghKolon.id ? 200 : 500,
+          gecti: tasinan.columnId === ghKolon.id,
+        });
+
+        // Ayni teslimat tekrar: kart geri cekilse bile ikinci kez islenmemeli.
+        await prisma.card.update({ where: { id: ghKart.id }, data: { columnId: ws.todo.id } });
+        await cagir("tekrar teslimat yok sayilir", "POST", yol, {
+          govde: yuk,
+          basliklar: { "x-github-event": "push", "x-github-delivery": teslimat, "x-hub-signature-256": imza },
+        });
+        const tekrarSonrasi = await prisma.card.findUniqueOrThrow({
+          where: { id: ghKart.id },
+          select: { columnId: true },
+        });
+        sonuclar.push({
+          akis: suankiAkis,
+          ad: "tekrar teslimat karti oynatmadi",
+          yontem: "POST",
+          yol,
+          beklenen: [200],
+          gelen: tekrarSonrasi.columnId === ws.todo.id ? 200 : 500,
+          gecti: tekrarSonrasi.columnId === ws.todo.id,
+        });
+      }
+
+      await yasak("yabanci baglantiyi silemez", "DELETE", `/projects/${ws.project.id}/github-link`, yabanciToken);
+      await cagir("baglantiyi kaldir", "DELETE", `/projects/${ws.project.id}/github-link`, { token: adminToken });
+    }
+
+    // -------------------------------------------- 12. var olmayan kaynaklar
+    akis("12-yok-kaynak");
     const sahteId = "00000000-0000-0000-0000-000000000000";
     await cagir("olmayan kart", "GET", `/cards/${sahteId}`, { token: adminToken, beklenen: [400, 404] });
     await cagir("olmayan proje panosu", "GET", `/projects/${sahteId}/board`, { token: adminToken, beklenen: [400, 403, 404] });
